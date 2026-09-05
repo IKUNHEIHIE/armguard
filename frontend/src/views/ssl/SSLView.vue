@@ -46,9 +46,23 @@
             <tr v-for="cert in certs" :key="cert.id" class="hover:bg-slate-800/30 transition">
               <!-- Domain -->
               <td class="py-3.5 px-4">
-                <div class="font-bold text-slate-100 flex items-center gap-1.5">
-                  <Lock class="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                  {{ cert.domain }}
+                <div class="flex items-center gap-2">
+                  <button
+                    @click="openCertDetail(cert)"
+                    class="font-bold text-slate-100 hover:text-brand-400 flex items-center gap-1.5 transition text-left group"
+                    title="点击查看证书详情与公私钥"
+                  >
+                    <Lock class="w-3.5 h-3.5 text-emerald-400 shrink-0 group-hover:scale-110 transition-transform" />
+                    <span class="group-hover:underline decoration-brand-400 underline-offset-2">{{ cert.domain }}</span>
+                    <Eye class="w-3 h-3 text-slate-500 group-hover:text-brand-400 transition opacity-0 group-hover:opacity-100" />
+                  </button>
+                  <button
+                    @click.stop="navigateToCertDir(cert.domain)"
+                    class="p-1 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-cyan-400 transition"
+                    title="快速导航到证书所在目录 (/etc/ssl/armguard/...)"
+                  >
+                    <FolderOpen class="w-3 h-3" />
+                  </button>
                 </div>
                 <div v-if="cert.sans?.length" class="text-[10px] text-slate-500 mt-0.5">
                   SAN: {{ cert.sans.join(', ') }}
@@ -104,6 +118,20 @@
               <!-- Actions -->
               <td class="py-3.5 px-4 text-right">
                 <div class="inline-flex items-center gap-1.5">
+                  <button
+                    @click="openCertDetail(cert)"
+                    title="查看证书与密钥"
+                    class="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition"
+                  >
+                    <Eye class="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    @click="navigateToCertDir(cert.domain)"
+                    title="在文件管理器中打开证书所在目录"
+                    class="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-cyan-400 hover:text-cyan-300 transition"
+                  >
+                    <FolderOpen class="w-3.5 h-3.5" />
+                  </button>
                   <button
                     @click="openDeployModal(cert)"
                     title="部署至站点"
@@ -281,20 +309,189 @@
         </div>
       </form>
     </Modal>
+
+    <!-- View Certificate Detail & Files Modal -->
+    <Modal v-model="showDetailModal" :title="`证书详情: ${selectedCertDetail?.domain || ''}`" size="xl">
+      <div v-if="loadingDetail" class="py-12 flex flex-col items-center justify-center text-slate-400 gap-3">
+        <Loader2 class="w-8 h-8 text-brand-400 animate-spin" />
+        <span class="text-xs font-mono">正在检索物理证书与私钥内容...</span>
+      </div>
+      <div v-else-if="selectedCertDetail" class="space-y-4 font-mono text-xs">
+        <!-- Top Info Banner & Path Navigation -->
+        <div class="p-3.5 rounded-xl bg-slate-900/90 border border-slate-800 flex flex-wrap items-center justify-between gap-3">
+          <div class="space-y-1.5">
+            <div class="flex items-center gap-2 flex-wrap">
+              <span class="text-slate-400">物理存储目录:</span>
+              <span class="text-emerald-300 font-bold bg-slate-950 px-2 py-0.5 rounded border border-slate-800 tracking-wide">{{ selectedCertDetail.cert_dir }}</span>
+            </div>
+            <div class="flex flex-wrap items-center gap-3 text-[11px] text-slate-400">
+              <span>签发机构: <strong class="text-emerald-400">{{ selectedCertDetail.issuer }}</strong></span>
+              <span>到期时间: <strong class="text-slate-200">{{ selectedCertDetail.expires_at }} (剩余 {{ selectedCertDetail.days_remaining }} 天)</strong></span>
+              <span v-if="selectedCertDetail.sig_algorithm">算法: <strong class="text-slate-300">{{ selectedCertDetail.sig_algorithm }}</strong></span>
+            </div>
+          </div>
+
+          <button
+            @click="navigateToCertDir(selectedCertDetail.domain)"
+            class="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 font-bold border border-cyan-500/30 transition shadow-sm text-xs"
+          >
+            <FolderOpen class="w-4 h-4" />
+            在文件管理器中打开此目录
+          </button>
+        </div>
+
+        <!-- Detail Tabs -->
+        <div class="flex items-center gap-2 border-b border-slate-800 pb-2">
+          <button
+            @click="detailTab = 'cert'"
+            class="px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5"
+            :class="detailTab === 'cert' ? 'bg-brand-500/20 text-brand-400 border border-brand-500/30' : 'text-slate-400 hover:text-slate-200'"
+          >
+            <FileText class="w-3.5 h-3.5" />
+            证书公钥链 (fullchain.pem)
+          </button>
+          <button
+            @click="detailTab = 'key'"
+            class="px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5"
+            :class="detailTab === 'key' ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' : 'text-slate-400 hover:text-slate-200'"
+          >
+            <Key class="w-3.5 h-3.5" />
+            私钥文件 (privkey.pem)
+          </button>
+          <button
+            v-if="selectedCertDetail.openssl_text"
+            @click="detailTab = 'x509'"
+            class="px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5"
+            :class="detailTab === 'x509' ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30' : 'text-slate-400 hover:text-slate-200'"
+          >
+            <Shield class="w-3.5 h-3.5" />
+            X.509 权威结构解析
+          </button>
+        </div>
+
+        <!-- Tab 1: Certificate PEM -->
+        <div v-if="detailTab === 'cert'" class="space-y-2">
+          <div class="flex items-center justify-between text-[11px] text-slate-400">
+            <span>文件路径: <code class="text-slate-300">{{ selectedCertDetail.cert_path }}</code></span>
+            <button
+              @click="copyContent(selectedCertDetail.fullchain, '证书公钥 PEM 已复制到剪贴板')"
+              class="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 transition"
+            >
+              <Copy class="w-3 h-3 text-brand-400" />
+              复制公钥 PEM
+            </button>
+          </div>
+          <textarea
+            readonly
+            :value="selectedCertDetail.fullchain"
+            rows="12"
+            class="w-full bg-slate-950 text-slate-200 font-mono text-[11px] p-3 rounded-xl border border-slate-800 focus:outline-none leading-relaxed"
+          ></textarea>
+        </div>
+
+        <!-- Tab 2: Private Key PEM -->
+        <div v-if="detailTab === 'key'" class="space-y-2">
+          <div class="flex items-center justify-between text-[11px] text-slate-400">
+            <span class="flex items-center gap-1.5">
+              <span>文件路径: <code class="text-slate-300">{{ selectedCertDetail.key_path }}</code></span>
+              <span class="px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 text-[10px]">机密私钥</span>
+            </span>
+            <div class="flex items-center gap-2">
+              <button
+                @click="showKeyPlain = !showKeyPlain"
+                class="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition text-[11px]"
+              >
+                <Eye v-if="!showKeyPlain" class="w-3 h-3" />
+                <EyeOff v-else class="w-3 h-3" />
+                {{ showKeyPlain ? '隐藏明文' : '显示明文' }}
+              </button>
+              <button
+                @click="copyContent(selectedCertDetail.privkey, '私钥内容已复制到剪贴板')"
+                class="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 transition text-[11px]"
+              >
+                <Copy class="w-3 h-3 text-amber-400" />
+                复制私钥
+              </button>
+            </div>
+          </div>
+          <textarea
+            readonly
+            :value="showKeyPlain ? selectedCertDetail.privkey : maskKey(selectedCertDetail.privkey)"
+            rows="12"
+            class="w-full bg-slate-950 font-mono text-[11px] p-3 rounded-xl border border-slate-800 focus:outline-none leading-relaxed"
+            :class="showKeyPlain ? 'text-amber-200/90' : 'text-slate-600'"
+          ></textarea>
+        </div>
+
+        <!-- Tab 3: X.509 OpenSSL Text -->
+        <div v-if="detailTab === 'x509'" class="space-y-2">
+          <div class="flex items-center justify-between text-[11px] text-slate-400">
+            <span>OpenSSL 规范元数据解构</span>
+            <button
+              @click="copyContent(selectedCertDetail.openssl_text || '', 'X.509 解析文本已复制')"
+              class="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 transition"
+            >
+              <Copy class="w-3 h-3 text-purple-400" />
+              复制解析文本
+            </button>
+          </div>
+          <textarea
+            readonly
+            :value="selectedCertDetail.openssl_text"
+            rows="12"
+            class="w-full bg-slate-950 text-purple-200/90 font-mono text-[11px] p-3 rounded-xl border border-slate-800 focus:outline-none leading-relaxed"
+          ></textarea>
+        </div>
+
+        <div class="flex justify-end pt-2">
+          <button
+            @click="showDetailModal = false"
+            class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200"
+          >
+            关闭
+          </button>
+        </div>
+      </div>
+    </Modal>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
-import { ShieldCheck, UploadCloud, Lock, RefreshCw, Trash2, Send, Globe, Loader2 } from 'lucide-vue-next'
+import { useRouter } from 'vue-router'
+import {
+  ShieldCheck,
+  UploadCloud,
+  Lock,
+  RefreshCw,
+  Trash2,
+  Send,
+  Globe,
+  Loader2,
+  Eye,
+  EyeOff,
+  FolderOpen,
+  Copy,
+  FileText,
+  Key,
+  Shield
+} from 'lucide-vue-next'
 import Modal from '@/components/Modal.vue'
-import { SSLCertificate, sslApi } from '@/api/ssl'
+import { SSLCertificate, SSLCertDetail, sslApi } from '@/api/ssl'
 import { SiteItem, siteApi } from '@/api/site'
 import { toast } from '@/composables/useToast'
+
+const router = useRouter()
 
 const showApplyModal = ref(false)
 const showUploadModal = ref(false)
 const showDeployModal = ref(false)
+const showDetailModal = ref(false)
+const loadingDetail = ref(false)
+const selectedCertDetail = ref<SSLCertDetail | null>(null)
+const detailTab = ref<'cert' | 'key' | 'x509'>('cert')
+const showKeyPlain = ref(false)
+
 const deployingCert = ref<SSLCertificate | null>(null)
 const selectedSiteId = ref<number | null>(null)
 const availableSites = ref<SiteItem[]>([])
@@ -330,6 +527,54 @@ async function loadCerts() {
   } catch (err: any) {
     console.error('Failed to load certs:', err)
   }
+}
+
+async function openCertDetail(cert: SSLCertificate) {
+  showDetailModal.value = true
+  loadingDetail.value = true
+  showKeyPlain.value = false
+  detailTab.value = 'cert'
+  try {
+    const res = await sslApi.getCertDetail(cert.id)
+    if (res.data?.data) {
+      selectedCertDetail.value = res.data.data
+    } else {
+      toast.error('获取证书详情失败')
+    }
+  } catch (err: any) {
+    toast.error(err.response?.data?.message || '获取证书内容失败')
+  } finally {
+    loadingDetail.value = false
+  }
+}
+
+function navigateToCertDir(domain: string) {
+  const targetPath = `/etc/ssl/armguard/${domain}`
+  toast.success(`正在跳转至文件管理器: ${targetPath}`)
+  showDetailModal.value = false
+  router.push({
+    path: '/files',
+    query: { path: targetPath }
+  })
+}
+
+function copyContent(text: string, msg: string) {
+  if (!text) return
+  navigator.clipboard.writeText(text)
+  toast.success(msg)
+}
+
+function maskKey(key?: string): string {
+  if (!key) return ''
+  const lines = key.split('\n')
+  if (lines.length <= 4) return '••••••••••••••••••••••••••••••••'
+  return [
+    lines[0],
+    '  [ 私钥内容已安全保护，点击上方 “显示明文” 或 “复制私钥” 按钮查看完整内容 ]',
+    '  ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••',
+    '  ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••',
+    lines[lines.length - 1] || lines[lines.length - 2]
+  ].join('\n')
 }
 
 async function handleApplyCert() {

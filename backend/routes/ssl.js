@@ -314,6 +314,75 @@ export async function handleSSL(pathname, req, res, url, ctx) {
     return true
   }
 
+  // 4. Get Certificate Detail & Contents (fullchain.pem, privkey.pem, metadata)
+  const detailMatch = pathname.match(/^\/api\/v1\/ssl\/certs\/(\d+)\/detail$/)
+  if (detailMatch && req.method === 'GET') {
+    const id = parseInt(detailMatch[1], 10)
+    const cert = ctx.sslCerts.find(c => c.id === id)
+    if (!cert) {
+      res.json(null, '证书不存在', 404)
+      return true
+    }
+
+    const certDir = path.join(ctx.SSL_DIR, cert.domain)
+    const certPath = path.join(certDir, 'fullchain.pem')
+    const keyPath = path.join(certDir, 'privkey.pem')
+
+    let fullchain = ''
+    let privkey = ''
+    let opensslText = ''
+    let serialNumber = ''
+    let sigAlgorithm = ''
+    let notBefore = ''
+    let notAfter = ''
+
+    if (fs.existsSync(certPath)) {
+      try {
+        fullchain = fs.readFileSync(certPath, 'utf8')
+      } catch (e) {
+        fullchain = `读取证书文件失败: ${e.message}`
+      }
+
+      try {
+        const textRes = spawnSync('openssl', ['x509', '-in', certPath, '-text', '-noout'], { encoding: 'utf-8' })
+        if (textRes.status === 0) {
+          opensslText = textRes.stdout || ''
+          const serialMatch = opensslText.match(/Serial Number:\s*([^\n]+)/i)
+          if (serialMatch) serialNumber = serialMatch[1].trim()
+          const sigMatch = opensslText.match(/Signature Algorithm:\s*([^\n]+)/i)
+          if (sigMatch) sigAlgorithm = sigMatch[1].trim()
+          const nbMatch = opensslText.match(/Not Before:\s*([^\n]+)/i)
+          if (nbMatch) notBefore = nbMatch[1].trim()
+          const naMatch = opensslText.match(/Not After\s*:\s*([^\n]+)/i)
+          if (naMatch) notAfter = naMatch[1].trim()
+        }
+      } catch {}
+    }
+
+    if (fs.existsSync(keyPath)) {
+      try {
+        privkey = fs.readFileSync(keyPath, 'utf8')
+      } catch (e) {
+        privkey = `读取私钥文件失败: ${e.message}`
+      }
+    }
+
+    res.json({
+      ...cert,
+      cert_dir: certDir,
+      cert_path: certPath,
+      key_path: keyPath,
+      fullchain,
+      privkey,
+      serial_number: serialNumber,
+      sig_algorithm: sigAlgorithm,
+      not_before: notBefore,
+      not_after: notAfter,
+      openssl_text: opensslText
+    })
+    return true
+  }
+
   // 4. Renew Certificate
   const renewMatch = pathname.match(/^\/api\/v1\/ssl\/certs\/(\d+)\/renew$/)
   if (renewMatch && req.method === 'POST') {
