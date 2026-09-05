@@ -1,0 +1,44 @@
+# Environment & Credentials
+.env
+.env.local
+.env.*.local
+*.env
+!.env.example
+
+# Dependencies
+node_modules/
+frontend/node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Production Build & Dist
+dist/
+frontend/dist/
+release/*.tar.gz
+release/*.zip
+
+# Python Bytecode & Virtual Environments
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.venv/
+venv/
+ENV/
+
+# System & Editor Files
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Temporary & Log Files
+*.log
+logs/
+temp/
+tmp/

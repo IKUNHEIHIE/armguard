@@ -1,0 +1,15 @@
+{
+  "name": "armguard-panel",
+  "version": "0.1.0-alpha",
+  "type": "module",
+  "description": "ArmGuard - Lightweight Visual Linux Server Management Panel for ARM Architecture",
+  "scripts": {
+    "dev": "npm --prefix frontend run dev",
+    "build": "npm --prefix frontend run build",
+    "start": "node backend/dev_server.js",
+    "serve": "node backend/dev_server.js"
+  },
+  "keywords": ["arm", "arm64", "raspberry-pi", "linux", "server-panel", "ops"],
+  "author": "ArmGuard Team",
+  "license": "MIT"
+}
