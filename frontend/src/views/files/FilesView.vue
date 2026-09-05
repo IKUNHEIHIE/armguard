@@ -32,35 +32,86 @@
 
     <!-- Path Breadcrumb and Search Bar -->
     <div class="glass-panel p-3 rounded-xl border border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs font-mono">
-      <!-- Breadcrumbs -->
-      <div class="flex items-center gap-1.5 overflow-x-auto text-slate-300">
-        <button
-          @click="navigateTo('/')"
-          class="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-slate-200 flex items-center"
+      <!-- Breadcrumbs & Editable Path (Dual Mode) -->
+      <div
+        class="flex-1 min-w-[320px] flex items-center bg-slate-950/70 border rounded-lg px-2.5 py-1.5 transition"
+        :class="isEditingPath ? 'border-brand-500 ring-1 ring-brand-500/30' : 'border-slate-800 hover:border-slate-700'"
+      >
+        <!-- Mode A: Editable Absolute Path Input -->
+        <form
+          v-if="isEditingPath"
+          @submit.prevent="submitPathInput"
+          class="flex-1 flex items-center gap-2 w-full"
         >
-          <Home class="w-3.5 h-3.5" />
-        </button>
-        <template v-for="(seg, idx) in pathSegments" :key="idx">
-          <span class="text-slate-600">/</span>
+          <Folder class="w-3.5 h-3.5 text-brand-400 shrink-0" />
+          <input
+            ref="pathInputRef"
+            v-model="inputPathValue"
+            type="text"
+            placeholder="输入绝对路径 (如 /etc/ssl/armguard) 并按回车"
+            @keydown.esc="cancelPathEdit"
+            class="flex-1 bg-transparent text-white font-mono text-xs focus:outline-none placeholder-slate-500"
+          />
           <button
-            @click="navigateToSegment(idx)"
-            class="px-1.5 py-0.5 rounded hover:bg-slate-800 hover:text-brand-400 transition"
-            :class="{ 'font-bold text-white': idx === pathSegments.length - 1 }"
+            type="submit"
+            class="px-2.5 py-0.5 rounded bg-brand-600 hover:bg-brand-500 text-slate-950 font-bold text-[11px] shrink-0 transition"
           >
-            {{ seg }}
+            前往
           </button>
-        </template>
+          <button
+            type="button"
+            @click="cancelPathEdit"
+            class="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-slate-200 shrink-0 transition"
+            title="取消 (Esc)"
+          >
+            <X class="w-3.5 h-3.5" />
+          </button>
+        </form>
+
+        <!-- Mode B: Clickable Breadcrumb Segments (Click blank or edit button to enter edit mode) -->
+        <div
+          v-else
+          @click="enterPathEditMode"
+          class="flex-1 flex items-center justify-between overflow-x-auto text-slate-300 cursor-text group"
+          title="点击输入绝对路径快速导航"
+        >
+          <div class="flex items-center gap-1.5 flex-wrap">
+            <button
+              @click.stop="navigateTo('/')"
+              class="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-slate-200 flex items-center transition"
+              title="根目录 /"
+            >
+              <Home class="w-3.5 h-3.5" />
+            </button>
+            <template v-for="(seg, idx) in pathSegments" :key="idx">
+              <span class="text-slate-600 select-none">/</span>
+              <button
+                @click.stop="navigateToSegment(idx)"
+                class="px-1.5 py-0.5 rounded hover:bg-slate-800 hover:text-brand-400 transition"
+                :class="{ 'font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20': idx === pathSegments.length - 1 }"
+              >
+                {{ seg }}
+              </button>
+            </template>
+          </div>
+
+          <!-- Direct Edit Toggle Hint -->
+          <div class="flex items-center gap-1 pl-2 text-slate-500 group-hover:text-brand-400 shrink-0 select-none transition">
+            <Edit2 class="w-3 h-3" />
+            <span class="text-[10px] hidden sm:inline opacity-70 group-hover:opacity-100">输入路径</span>
+          </div>
+        </div>
       </div>
 
       <!-- Quick Search -->
-      <div class="relative w-48">
+      <div class="relative w-48 shrink-0">
         <input
           v-model="searchQuery"
           type="text"
           placeholder="搜索当前目录..."
-          class="w-full bg-slate-950/80 border border-slate-700 rounded-lg px-3 py-1 pl-8 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-brand-500"
+          class="w-full bg-slate-950/80 border border-slate-700 rounded-lg px-3 py-1.5 pl-8 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-brand-500"
         />
-        <Search class="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2" />
+        <Search class="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2.5" />
       </div>
     </div>
 
@@ -290,8 +341,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { ref, computed, onMounted, watch, nextTick } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import {
   FilePlus,
   FolderPlus,
@@ -307,16 +358,22 @@ import {
   Edit2,
   Download,
   Shield,
-  Trash2
+  Trash2,
+  X
 } from 'lucide-vue-next'
 import Modal from '@/components/Modal.vue'
 import { FileItem, fileApi } from '@/api/file'
 import { toast } from '@/composables/useToast'
 
 const route = useRoute()
+const router = useRouter()
 const currentPath = ref((route.query.path as string) || '/www/wwwroot')
 const searchQuery = ref('')
 const loading = ref(false)
+
+const isEditingPath = ref(false)
+const inputPathValue = ref('')
+const pathInputRef = ref<HTMLInputElement | null>(null)
 
 const showEditorModal = ref(false)
 const showCreateFileModal = ref(false)
@@ -343,6 +400,39 @@ const filteredFiles = computed(() => {
   return files.value.filter(f => f.name.toLowerCase().includes(searchQuery.value.toLowerCase()))
 })
 
+function enterPathEditMode() {
+  isEditingPath.value = true
+  inputPathValue.value = currentPath.value
+  nextTick(() => {
+    if (pathInputRef.value) {
+      pathInputRef.value.focus()
+      pathInputRef.value.select()
+    }
+  })
+}
+
+function cancelPathEdit() {
+  isEditingPath.value = false
+}
+
+function submitPathInput() {
+  let target = inputPathValue.value.trim()
+  if (!target) {
+    cancelPathEdit()
+    return
+  }
+  if (!target.startsWith('/')) {
+    target = '/' + target
+  }
+  target = target.replace(/\/+/g, '/')
+  if (target.length > 1 && target.endsWith('/')) {
+    target = target.slice(0, -1)
+  }
+
+  isEditingPath.value = false
+  loadDirectory(target)
+}
+
 async function loadDirectory(path = currentPath.value) {
   loading.value = true
   try {
@@ -350,9 +440,13 @@ async function loadDirectory(path = currentPath.value) {
     if (res.data && res.data.data) {
       files.value = res.data.data.files
       currentPath.value = res.data.data.current_path
+      if (route.query.path !== res.data.data.current_path) {
+        router.replace({ query: { ...route.query, path: res.data.data.current_path } })
+      }
     }
   } catch (err: any) {
     console.error(`加载目录失败: ${err.message}`)
+    toast.error(`加载目录失败 [${path}]: ${err.response?.data?.message || err.message}`)
     // Fallback to / if path doesn't exist
     if (path !== '/') loadDirectory('/')
   } finally {
