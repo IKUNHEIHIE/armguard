@@ -2,7 +2,7 @@
   "name": "armguard-panel",
   "version": "0.1.0-alpha",
   "type": "module",
-  "description": "ArmGuard - Lightweight Visual Linux Server Management Panel for ARM Architecture",
+  "description": "专为 ARM 架构量身打造的高性能、轻量级 Linux 可视化运维管理面板",
   "scripts": {
     "dev": "npm --prefix frontend run dev",
     "build": "npm --prefix frontend run build",
