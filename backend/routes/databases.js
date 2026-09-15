@@ -26,8 +26,11 @@ export async function handleDatabases(pathname, req, res, url, ctx) {
           spawnSync('mariadb', ['-e', `CREATE DATABASE IF NOT EXISTS \`${safeDbName}\` CHARACTER SET ${charset};`], { encoding: 'utf-8' })
           if (body.username && body.password) {
             const safeUser = (body.username || '').replace(/[^a-zA-Z0-9_]/g, '')
-            const grantSql = `CREATE USER IF NOT EXISTS '${safeUser}'@'localhost' IDENTIFIED BY '${body.password}'; GRANT ALL PRIVILEGES ON \`${safeDbName}\`.* TO '${safeUser}'@'localhost'; FLUSH PRIVILEGES;`
-            spawnSync('mariadb', ['-e', grantSql], { encoding: 'utf-8' })
+            const safePass = String(body.password || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\0/g, '')
+            if (safeUser) {
+              const grantSql = `CREATE USER IF NOT EXISTS '${safeUser}'@'localhost' IDENTIFIED BY '${safePass}'; GRANT ALL PRIVILEGES ON \`${safeDbName}\`.* TO '${safeUser}'@'localhost'; FLUSH PRIVILEGES;`
+              spawnSync('mariadb', ['-e', grantSql], { encoding: 'utf-8' })
+            }
           }
         } catch (e) {
           console.error('MySQL database creation error:', e)

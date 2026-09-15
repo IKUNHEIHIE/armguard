@@ -10,22 +10,29 @@ export const PROTECTED_SYSTEM_PATHS = new Set([
 
 export const CRITICAL_SYSTEM_FILES = new Set([
   '/etc/passwd', '/etc/shadow', '/etc/group', '/etc/gshadow',
+  '/etc/shadow-', '/etc/gshadow-',
   '/etc/sudoers', '/etc/fstab', '/etc/hosts', '/etc/resolv.conf',
-  '/etc/ssh/sshd_config', '/etc/crontab', '/etc/systemd/system/armguard.service'
+  '/etc/ssh/sshd_config', '/etc/crontab', '/etc/systemd/system/armguard.service',
+  '/var/lib/armguard/users.json'
 ])
 
 export const CRITICAL_PREFIXES = [
   '/boot', '/proc', '/sys', '/dev', '/run',
-  '/etc/ssh/ssh_host_', '/lib/systemd', '/usr/bin', '/usr/sbin'
+  '/etc/ssh', '/etc/sudoers.d', '/etc/systemd', '/lib/systemd',
+  '/usr/bin', '/usr/sbin', '/root/.ssh'
 ]
 
 export function isProtectedPath(targetPath) {
   if (!targetPath) return true
   const resolved = path.resolve(targetPath)
-  if (PROTECTED_SYSTEM_PATHS.has(resolved)) return true
-  if (CRITICAL_SYSTEM_FILES.has(resolved)) return true
+  const posixPath = resolved.replace(/\\/g, '/').replace(/^[a-zA-Z]:/, '')
+  if (PROTECTED_SYSTEM_PATHS.has(resolved) || PROTECTED_SYSTEM_PATHS.has(posixPath)) return true
+  if (CRITICAL_SYSTEM_FILES.has(resolved) || CRITICAL_SYSTEM_FILES.has(posixPath)) return true
   for (const prefix of CRITICAL_PREFIXES) {
-    if (resolved.startsWith(prefix)) return true
+    if (resolved.startsWith(prefix) || posixPath.startsWith(prefix)) return true
+  }
+  if (posixPath.endsWith('/.env') || posixPath.endsWith('/id_rsa') || posixPath.endsWith('/id_ed25519') || posixPath.endsWith('/authorized_keys')) {
+    return true
   }
   const parts = resolved.split(path.sep).filter(Boolean)
   if (parts.length <= 1) return true
@@ -83,6 +90,10 @@ export async function handleFiles(pathname, req, res, url, ctx) {
     if (req.method === 'GET' && filePath) {
       try {
         const safePath = path.resolve(filePath)
+        if (ctx.isProtectedPath(safePath)) {
+          res.json(null, `安全拦截：禁止查看系统受保护文件 [${safePath}]！`, 403)
+          return true
+        }
         const content = fs.readFileSync(safePath, 'utf8')
         res.json({ content, encoding: 'utf-8', size: content.length, path: safePath })
         return true

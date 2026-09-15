@@ -209,13 +209,6 @@ function checkAuth(req, res, url = null) {
     token = authHeader.substring(7).trim()
   } else if (req.headers['x-api-token']) {
     token = req.headers['x-api-token'].toString().trim()
-  } else if (url && url.searchParams && url.searchParams.get('token')) {
-    token = url.searchParams.get('token').trim()
-  } else if (req.url && req.url.includes('token=')) {
-    try {
-      const parsed = new URL(req.url, 'http://127.0.0.1')
-      token = (parsed.searchParams.get('token') || '').trim()
-    } catch {}
   }
 
   if (!token || !isValidToken(token)) {
@@ -431,11 +424,75 @@ const ctx = {
 
 initWarpConfig(ctx)
 
+// IP Whitelist Helpers
+function matchCidr(ip, cidr) {
+  try {
+    const [range, bits = '32'] = cidr.split('/')
+    const mask = ~(2 ** (32 - parseInt(bits, 10)) - 1)
+    const ip2long = (ipStr) => ipStr.split('.').reduce((acc, oct) => (acc << 8) + parseInt(oct, 10), 0) >>> 0
+    return (ip2long(ip) & mask) === (ip2long(range) & mask)
+  } catch {
+    return false
+  }
+}
+
+function isIpAllowed(clientIp, whitelistStr) {
+  if (!whitelistStr || !whitelistStr.trim()) return true
+  const list = whitelistStr.split(/[\n,;]/).map(s => s.trim()).filter(Boolean)
+  if (list.length === 0) return true
+  const cleanIp = (clientIp || '').replace(/^::ffff:/, '').trim()
+  if (cleanIp === '127.0.0.1' || cleanIp === '::1' || cleanIp === 'localhost') return true
+  for (const item of list) {
+    const cleanItem = item.replace(/^::ffff:/, '').trim()
+    if (cleanItem === cleanIp || item === clientIp) return true
+    if (cleanItem.includes('/') && cleanIp.includes('.')) {
+      if (matchCidr(cleanIp, cleanItem)) return true
+    }
+  }
+  return false
+}
+
+function parseCookies(req) {
+  const list = {}
+  const rc = req.headers['cookie']
+  if (!rc) return list
+  rc.split(';').forEach(cookie => {
+    const parts = cookie.split('=')
+    list[parts.shift().trim()] = decodeURI(parts.join('=').trim())
+  })
+  return list
+}
+
 // HTTP Server
 const server = http.createServer(async (req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', '*')
+  const clientIp = (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress || '127.0.0.1'
+  const currentSettings = loadJSON(SETTINGS_FILE, settings)
+
+  // 1. IP Whitelist Enforcement
+  if (!isIpAllowed(clientIp, currentSettings.ip_whitelist)) {
+    res.writeHead(403, { 'Content-Type': 'application/json; charset=utf-8' })
+    res.end(JSON.stringify({ code: 403, message: '访问被拒绝：您的 IP 不在受信任白名单内' }))
+    return
+  }
+
+  // 2. Strict CORS Handling
+  const origin = req.headers['origin']
+  if (origin) {
+    const host = req.headers['host']
+    try {
+      const originHost = new URL(origin).host
+      if (originHost === host || origin.includes('localhost') || origin.includes('127.0.0.1')) {
+        res.setHeader('Access-Control-Allow-Origin', origin)
+      }
+    } catch {
+      res.setHeader('Access-Control-Allow-Origin', origin)
+    }
+  } else {
+    res.setHeader('Access-Control-Allow-Origin', '*')
+  }
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Token')
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Token, X-Security-Entrance')
+  res.setHeader('Access-Control-Allow-Credentials', 'true')
 
   res.json = (data = null, message = 'ok', code = 0) => {
     if (res.headersSent) return
@@ -451,17 +508,43 @@ const server = http.createServer(async (req, res) => {
 
   const url = new URL(req.url, `http://${req.headers.host || '127.0.0.1'}`)
   const pathname = url.pathname
+  const secEntrance = (currentSettings.security_entrance || '').trim()
+
+  // 3. Security Entrance Handling (e.g. /armguard)
+  if (secEntrance && secEntrance !== '/' && (pathname === secEntrance || pathname === `${secEntrance}/`)) {
+    res.writeHead(302, {
+      'Set-Cookie': 'ag_entrance=1; Path=/; HttpOnly; SameSite=Lax',
+      'Location': '/'
+    })
+    res.end()
+    return
+  }
+
+  const cookies = parseCookies(req)
+  const hasEntranceCookie = cookies['ag_entrance'] === '1'
+  const authHeader = req.headers['authorization'] || ''
+  const hasValidToken = authHeader.startsWith('Bearer ') && isValidToken(authHeader.substring(7).trim())
 
   // API Dispatch Router
   if (pathname.startsWith('/api/v1/')) {
     res.setHeader('Content-Type', 'application/json; charset=utf-8')
 
-    // 1. Public Auth routes
+    // 4. Require Security Entrance for Login API
+    if (pathname === '/api/v1/auth/login' && req.method === 'POST') {
+      const entrancePass = !secEntrance || secEntrance === '/' || hasEntranceCookie || req.headers['x-security-entrance'] === secEntrance
+      if (!entrancePass) {
+        res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify({ code: 404, message: 'Not Found' }))
+        return
+      }
+    }
+
+    // Public Auth routes
     if (pathname === '/api/v1/auth/captcha' || (pathname === '/api/v1/auth/login' && req.method === 'POST')) {
       if (await handleAuth(pathname, req, res, url, ctx)) return
     }
 
-    // 2. Authentication Enforcement Middleware
+    // Authentication Enforcement Middleware
     if (!checkAuth(req, res, url)) {
       return
     }
@@ -485,6 +568,15 @@ const server = http.createServer(async (req, res) => {
     // Fallback for unmatched API endpoints
     res.json({}, 'ok')
     return
+  }
+
+  // Disguise 404 page if security entrance is configured and not yet entered
+  if (secEntrance && secEntrance !== '/' && !hasEntranceCookie && !hasValidToken) {
+    if (pathname === '/' || pathname === '/index.html') {
+      res.writeHead(404, { 'Content-Type': 'text/html; charset=utf-8' })
+      res.end('<!DOCTYPE html><html><head><title>404 Not Found</title></head><body><center><h1>404 Not Found</h1></center><hr><center>nginx</center></body></html>')
+      return
+    }
   }
 
   // Static frontend dist with High-Performance Gzip Compression & Immutable Caching

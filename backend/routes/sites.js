@@ -1,5 +1,6 @@
 import fs from 'fs'
 import path from 'path'
+import crypto from 'crypto'
 import { spawnSync, execSync } from 'child_process'
 
 export function renderNginxSiteConf(site, ctx) {
@@ -17,7 +18,8 @@ export function renderNginxSiteConf(site, ctx) {
   if (site.basic_auth_enabled && site.basic_auth_user && site.basic_auth_pass) {
     const htpasswdPath = path.join(ctx.DATA_DIR, `htpasswd_${site.domain}`)
     try {
-      fs.writeFileSync(htpasswdPath, `${site.basic_auth_user}:{PLAIN}${site.basic_auth_pass}\n`, 'utf8')
+      const shaPass = crypto.createHash('sha1').update(String(site.basic_auth_pass)).digest('base64')
+      fs.writeFileSync(htpasswdPath, `${site.basic_auth_user}:{SHA}${shaPass}\n`, 'utf8')
       authDirectives = `\n    auth_basic "Protected Area";\n    auth_basic_user_file ${htpasswdPath};`
     } catch {}
   }
