@@ -71,4 +71,5 @@ export const appStoreApi = {
 
   // MySQL Management APIs
   changeMysqlRootPassword: (password: string) => apiClient.post<ApiResponse<void>>('/apps/mysql/root-password', { password }),
+  switchMysqlVersion: (targetVersion: string) => apiClient.post<ApiResponse<{ task_id: string }>>('/apps/mysql/switch-version', { target_version: targetVersion }),
 }

@@ -3,6 +3,14 @@ import path from 'path'
 import zlib from 'zlib'
 import { spawnSync, execFile } from 'child_process'
 
+function getDbCli() {
+  return fs.existsSync('/usr/bin/mariadb') ? 'mariadb' : 'mysql'
+}
+
+function getDumpCli() {
+  return fs.existsSync('/usr/bin/mariadb-dump') ? 'mariadb-dump' : 'mysqldump'
+}
+
 export async function handleDatabases(pathname, req, res, url, ctx) {
   if (!pathname.startsWith('/api/v1/databases')) return false
 
@@ -23,13 +31,14 @@ export async function handleDatabases(pathname, req, res, url, ctx) {
       if (dbType === 'mysql' || dbType === 'mariadb') {
         try {
           const charset = body.character_set || 'utf8mb4'
-          spawnSync('mariadb', ['-e', `CREATE DATABASE IF NOT EXISTS \`${safeDbName}\` CHARACTER SET ${charset};`], { encoding: 'utf-8' })
+          const cli = getDbCli()
+          spawnSync(cli, ['-e', `CREATE DATABASE IF NOT EXISTS \`${safeDbName}\` CHARACTER SET ${charset};`], { encoding: 'utf-8' })
           if (body.username && body.password) {
             const safeUser = (body.username || '').replace(/[^a-zA-Z0-9_]/g, '')
             const safePass = String(body.password || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\0/g, '')
             if (safeUser) {
               const grantSql = `CREATE USER IF NOT EXISTS '${safeUser}'@'localhost' IDENTIFIED BY '${safePass}'; GRANT ALL PRIVILEGES ON \`${safeDbName}\`.* TO '${safeUser}'@'localhost'; FLUSH PRIVILEGES;`
-              spawnSync('mariadb', ['-e', grantSql], { encoding: 'utf-8' })
+              spawnSync(cli, ['-e', grantSql], { encoding: 'utf-8' })
             }
           }
         } catch (e) {
@@ -74,7 +83,7 @@ export async function handleDatabases(pathname, req, res, url, ctx) {
     if (target.type === 'mysql' || target.type === 'mariadb') {
       const cleanName = safeDbName.replace(/\.db$/, '')
       try {
-        spawnSync('mariadb', ['-e', `DROP DATABASE IF EXISTS \`${cleanName}\`;`], { encoding: 'utf-8' })
+        spawnSync(getDbCli(), ['-e', `DROP DATABASE IF EXISTS \`${cleanName}\`;`], { encoding: 'utf-8' })
       } catch {}
     } else {
       const dbFile = path.join(ctx.DATA_DIR, safeDbName.endsWith('.db') ? safeDbName : `${safeDbName}.db`)
@@ -99,7 +108,7 @@ export async function handleDatabases(pathname, req, res, url, ctx) {
 
     if (target && (target.type === 'mysql' || target.type === 'mariadb')) {
       const cleanName = target.db_name.replace(/[^a-zA-Z0-9_]/g, '')
-      execFile('mariadb', ['-D', cleanName, '-e', sql], { timeout: 8000, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
+      execFile(getDbCli(), ['-D', cleanName, '-e', sql], { timeout: 8000, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
         if (err && (!stdout || stdout.trim() === '')) {
           res.json(null, stderr || err.message, 500)
           return
@@ -153,7 +162,7 @@ export async function handleDatabases(pathname, req, res, url, ctx) {
     
     if (target && (target.type === 'mysql' || target.type === 'mariadb')) {
       const cleanName = safeDbName.replace(/\.db$/, '')
-      execFile('mariadb-dump', [cleanName], { timeout: 30000, maxBuffer: 50 * 1024 * 1024 }, (err, stdout, stderr) => {
+      execFile(getDumpCli(), [cleanName], { timeout: 30000, maxBuffer: 50 * 1024 * 1024 }, (err, stdout, stderr) => {
         if (err) {
           res.json(null, stderr || err.message, 500)
           return

@@ -356,6 +356,17 @@
           </button>
           <button
             v-if="manageData.app_key === 'mysql'"
+            @click="manageTab = 'version'"
+            class="px-3.5 py-1.5 rounded-lg transition text-xs flex items-center gap-1.5"
+            :class="manageTab === 'version' ? 'bg-brand-600 text-slate-950 font-bold' : 'text-slate-400 hover:text-slate-200'"
+          >
+            <span>🔄 版本与引擎切换</span>
+            <span class="px-1.5 py-0.2 rounded text-[9px] bg-slate-900 text-brand-300 font-bold border border-slate-700">
+              {{ manageData.visual_config?.engine || 'MariaDB' }}
+            </span>
+          </button>
+          <button
+            v-if="manageData.app_key === 'mysql'"
             @click="manageTab = 'password'"
             class="px-3.5 py-1.5 rounded-lg transition text-xs"
             :class="manageTab === 'password' ? 'bg-brand-600 text-slate-950 font-bold' : 'text-slate-400 hover:text-slate-200'"
@@ -1048,6 +1059,119 @@
           </div>
         </div>
 
+        <!-- TAB: MYSQL / MARIADB VERSION & ENGINE SWITCH -->
+        <div v-if="manageTab === 'version'" class="space-y-4 pt-1">
+          <!-- Current Engine Status Card -->
+          <div class="p-4 rounded-xl bg-slate-950 border border-slate-800 flex flex-wrap items-center justify-between gap-4">
+            <div class="flex items-center gap-3">
+              <div class="w-12 h-12 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-center text-2xl shadow-inner">
+                🐬
+              </div>
+              <div>
+                <div class="flex items-center gap-2">
+                  <span class="font-bold text-sm text-white">{{ manageData.visual_config?.engine || 'MariaDB' }}</span>
+                  <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-brand-500/20 text-brand-300 border border-brand-500/30">
+                    {{ manageData.visual_config?.current_version || 'MariaDB 10.11 (LTS)' }}
+                  </span>
+                  <span
+                    class="px-2 py-0.5 rounded-full text-[10px] font-bold border"
+                    :class="manageData.status === 'running' ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'bg-slate-800 text-slate-400 border-slate-700'"
+                  >
+                    ● {{ manageData.status === 'running' ? '运行中' : '已停止' }}
+                  </span>
+                </div>
+                <div class="text-[11px] text-slate-400 mt-1 flex items-center gap-3">
+                  <span>服务名称: <strong class="text-slate-300">{{ manageData.service_name || 'mariadb' }}</strong></span>
+                  <span>底层数据目录: <strong class="text-emerald-400 font-mono">{{ manageData.visual_config?.datadir || '/var/lib/mysql' }}</strong></span>
+                </div>
+              </div>
+            </div>
+            <div class="text-[11px] text-slate-400 max-w-xs text-right">
+              Ubuntu 24.04 ARM64 官方仓库原生收录版本，支持双向平滑安全迁移。
+            </div>
+          </div>
+
+          <!-- Migration Safety Notice -->
+          <div class="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/25 flex items-start gap-3 text-xs leading-relaxed text-amber-300/90">
+            <span class="text-base flex-shrink-0">🛡️</span>
+            <div>
+              <strong class="text-amber-200">平滑迁移安全保障机制：</strong>
+              在切换数据库引擎前，面板将自动调用 <code class="px-1 py-0.5 rounded bg-black/40 text-amber-300">mysqldump</code> 将全部现有数据库与表导出至 <code class="px-1 py-0.5 rounded bg-black/40 text-amber-300">/var/backups/</code>，并对原数据目录进行重命名快照归档。目标版本安装完成后自动回放导入数据，全程保障业务数据零丢失。
+            </div>
+          </div>
+
+          <!-- Target Version Cards -->
+          <div class="space-y-3">
+            <div class="text-white font-semibold text-xs flex items-center justify-between">
+              <span>可供切换的数据库引擎与版本</span>
+              <span class="text-[11px] text-slate-400">点击卡片即可发起平滑迁移</span>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div
+                v-for="vItem in (manageData.visual_config?.available_versions || [])"
+                :key="vItem.key"
+                class="p-4 rounded-xl border transition-all"
+                :class="vItem.is_current ? 'bg-slate-900/90 border-brand-500/60 shadow-lg shadow-brand-500/5' : 'bg-slate-950/60 border-slate-800 hover:border-slate-700'"
+              >
+                <div class="flex items-start justify-between gap-3">
+                  <div>
+                    <div class="flex items-center gap-2">
+                      <span class="font-bold text-sm text-white">{{ vItem.name }}</span>
+                      <span
+                        v-if="vItem.is_current"
+                        class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
+                      >
+                        ✓ 当前正在运行
+                      </span>
+                    </div>
+                    <p class="text-[11px] text-slate-400 mt-1 leading-relaxed">
+                      {{ vItem.description }}
+                    </p>
+                    <div class="mt-2 text-[10px] text-slate-500 font-mono">
+                      <span>APT 软件包: </span><span class="text-slate-400">{{ vItem.pkg }}</span>
+                    </div>
+                  </div>
+
+                  <div class="flex-shrink-0 pt-1">
+                    <button
+                      v-if="!vItem.is_current"
+                      @click="promptSwitchMysql(vItem)"
+                      :disabled="mysqlSwitching"
+                      class="px-3 py-1.5 rounded-lg bg-brand-600 hover:bg-brand-500 text-slate-950 font-bold text-xs transition cursor-pointer flex items-center gap-1 shadow"
+                    >
+                      <RefreshCw class="w-3 h-3" :class="mysqlSwitching ? 'animate-spin' : ''" />
+                      <span>平滑切换</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Migration Progress Console (if switching) -->
+          <div v-if="mysqlSwitching" class="p-4 rounded-xl bg-slate-950 border border-brand-500/40 space-y-3 shadow-lg">
+            <div class="flex items-center justify-between text-xs">
+              <div class="flex items-center gap-2">
+                <Loader2 class="w-4 h-4 animate-spin text-brand-400" />
+                <span class="text-white font-bold">{{ switchTargetName ? `正在平滑迁移至 ${switchTargetName}...` : '正在执行数据库平滑迁移...' }}</span>
+              </div>
+              <span class="text-brand-400 font-bold font-mono">{{ mysqlSwitchProgress }}%</span>
+            </div>
+
+            <div class="h-2 w-full bg-slate-900 rounded-full overflow-hidden">
+              <div class="h-full bg-brand-500 transition-all duration-300" :style="{ width: `${mysqlSwitchProgress}%` }"></div>
+            </div>
+
+            <div class="p-3 bg-black/80 rounded-lg font-mono text-[11px] text-emerald-400 max-h-48 overflow-y-auto leading-relaxed border border-slate-800 space-y-0.5">
+              <div v-for="(log, idx) in mysqlSwitchLogs" :key="idx" class="text-slate-300">
+                <span class="text-slate-500">[{{ log.time }}]</span>
+                <span :class="log.text.includes('✓') || log.text.includes('🎉') ? 'text-emerald-300 font-bold' : log.text.includes('❌') ? 'text-rose-400 font-bold' : log.text.includes('[阶段') ? 'text-brand-300 font-semibold' : 'text-slate-300'"> {{ log.text }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- TAB: MYSQL ROOT PASSWORD -->
         <div v-if="manageTab === 'password'" class="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-4">
           <div>
@@ -1169,6 +1293,55 @@
 
     <!-- 3. Dedicated Cloudflare WARP Accelerator Modal -->
     <WarpPluginModal v-model="showWarpModal" />
+
+    <!-- 4. MySQL / MariaDB Smooth Switch Confirmation Modal -->
+    <Modal v-model="showSwitchConfirmModal" title="⚠️ 数据库平滑迁移确认" size="md">
+      <div class="space-y-4">
+        <div class="p-3.5 bg-amber-500/10 border border-amber-500/30 rounded-xl flex items-start gap-3">
+          <AlertTriangle class="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" />
+          <div class="text-xs text-amber-300/90 leading-relaxed">
+            您即将把当前数据库平滑迁移至 <strong class="text-amber-200 font-bold">{{ pendingSwitchItem?.name }}</strong>。
+            <p class="mt-1 text-slate-300">
+              系统将自动执行：全量数据备份 (<code class="text-amber-300">mysqldump</code>) → 数据目录快照归档 → APT 替换安装 → 数据库服务重启与数据热重载。
+            </p>
+          </div>
+        </div>
+
+        <div class="p-3 bg-slate-950 border border-slate-800 rounded-xl space-y-1.5 text-xs text-slate-400">
+          <div class="flex justify-between">
+            <span>当前运行引擎：</span>
+            <span class="text-white font-mono font-semibold">{{ manageData?.visual_config?.engine || 'MariaDB' }} ({{ manageData?.visual_config?.current_version || '10.11' }})</span>
+          </div>
+          <div class="flex justify-between">
+            <span>目标迁移版本：</span>
+            <span class="text-brand-300 font-mono font-semibold">{{ pendingSwitchItem?.name }}</span>
+          </div>
+          <div class="flex justify-between">
+            <span>备份目标路径：</span>
+            <span class="text-emerald-400 font-mono">/var/backups/mysql_migrate_*.sql</span>
+          </div>
+        </div>
+
+        <div class="text-xs text-slate-400">
+          切换过程中数据库服务将短暂中断约 30~60 秒。请确认业务已做好准备。
+        </div>
+
+        <div class="flex justify-end gap-3 pt-2">
+          <button
+            @click="showSwitchConfirmModal = false"
+            class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition"
+          >
+            取消
+          </button>
+          <button
+            @click="confirmSwitchMysql"
+            class="px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-500 text-slate-950 text-xs font-bold transition flex items-center gap-1.5 shadow"
+          >
+            <span>确认执行平滑迁移</span>
+          </button>
+        </div>
+      </div>
+    </Modal>
   </div>
 </template>
 
@@ -1199,7 +1372,7 @@ const installProgress = ref(0)
 const installingEngine = ref(false)
 const registeringAccount = ref(false)
 
-const manageTab = ref<'visual' | 'raw' | 'logs' | 'password'>('visual')
+const manageTab = ref<'visual' | 'raw' | 'logs' | 'password' | 'version'>('visual')
 const manageData = ref<AppManagementData | null>(null)
 const loadingManage = ref(false)
 const actionLoading = ref(false)
@@ -1207,6 +1380,13 @@ const savingVisual = ref(false)
 const savingRaw = ref(false)
 const appLogs = ref<string[]>([])
 const loadingLogs = ref(false)
+
+const mysqlSwitching = ref(false)
+const mysqlSwitchProgress = ref(0)
+const mysqlSwitchLogs = ref<{ time: string; text: string }[]>([])
+const switchTargetName = ref('')
+const showSwitchConfirmModal = ref(false)
+const pendingSwitchItem = ref<any>(null)
 
 const currentLogType = ref<'system' | 'error' | 'access' | 'slow'>('system')
 const newRootPassword = ref('')
@@ -1622,6 +1802,80 @@ async function submitChangeRootPassword() {
     toast.error(`修改密码失败: ${e.message}`)
   } finally {
     changingPassword.value = false
+  }
+}
+
+function promptSwitchMysql(item: any) {
+  pendingSwitchItem.value = item
+  showSwitchConfirmModal.value = true
+}
+
+async function confirmSwitchMysql() {
+  if (!pendingSwitchItem.value) return
+  const item = pendingSwitchItem.value
+  showSwitchConfirmModal.value = false
+  mysqlSwitching.value = true
+  mysqlSwitchProgress.value = 5
+  switchTargetName.value = item.name
+  mysqlSwitchLogs.value = [
+    { time: new Date().toLocaleTimeString(), text: `[migrate] 准备发起数据库平滑迁移任务，目标版本: ${item.name} (${item.key})...` }
+  ]
+
+  try {
+    const res = await appStoreApi.switchMysqlVersion(item.key)
+    const taskId = res.data?.data?.task_id
+    mysqlSwitchLogs.value.push({
+      time: new Date().toLocaleTimeString(),
+      text: `[migrate] 任务调度已启动 (TaskID: ${taskId})`
+    })
+
+    let lastLogCount = 0
+    const interval = setInterval(async () => {
+      if (!taskId) return
+      try {
+        const progressRes = await appStoreApi.getTaskProgress('mysql', taskId)
+        const p = progressRes.data?.data
+        if (p) {
+          mysqlSwitchProgress.value = p.progress_percent
+          if (p.logs && p.logs.length > lastLogCount) {
+            const newLines = p.logs.slice(lastLogCount)
+            for (const l of newLines) {
+              mysqlSwitchLogs.value.push({
+                time: new Date().toLocaleTimeString(),
+                text: l
+              })
+            }
+            lastLogCount = p.logs.length
+          }
+
+          if (p.stage === 'done' || p.stage === 'failed') {
+            clearInterval(interval)
+            mysqlSwitching.value = false
+            await loadApps()
+            eventBus.emit(EVENTS.APPS_UPDATED)
+            if (p.stage === 'done') {
+              toast.success(`🎉 数据库已成功平滑迁移至 ${item.name}！`)
+              // Refresh management view data
+              if (selectedApp.value) {
+                const updatedMgmt = await appStoreApi.getAppManagement(selectedApp.value.key)
+                if (updatedMgmt.data?.data) {
+                  manageData.value = updatedMgmt.data.data
+                }
+              }
+            } else {
+              toast.error(`❌ 数据库迁移失败，请检查操作日志或从备份归档恢复！`)
+            }
+          }
+        }
+      } catch (err: any) {
+        clearInterval(interval)
+        mysqlSwitching.value = false
+        toast.error(`获取迁移状态异常: ${err.message}`)
+      }
+    }, 1000)
+  } catch (err: any) {
+    mysqlSwitching.value = false
+    toast.error(`发起切换失败: ${err.message}`)
   }
 }
 

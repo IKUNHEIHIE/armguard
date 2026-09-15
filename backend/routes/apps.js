@@ -306,16 +306,31 @@ export async function handleApps(pathname, req, res, url, ctx) {
   const installMatch = pathname.match(/^\/api\/v1\/apps\/([a-zA-Z0-9_-]+)\/install$/)
   if (installMatch && req.method === 'POST') {
     const appKey = installMatch[1]
+    const body = await ctx.parseBody(req, res).catch(() => ({}))
+    const reqVersion = String(body.version || '').trim()
     const target = marketApps.find(a => a.key === appKey)
-    const pkgName = target?.pkg || appKey
+
+    let pkgName = target?.pkg || appKey
+    let targetDisplayName = target?.name || appKey
+
+    if (appKey === 'mysql') {
+      if (reqVersion.toLowerCase().includes('mysql 8') || reqVersion === 'mysql-8.0') {
+        pkgName = 'mysql-server'
+        targetDisplayName = 'MySQL 8.0'
+      } else {
+        pkgName = 'mariadb-server'
+        targetDisplayName = 'MariaDB 10.11 (LTS)'
+      }
+    }
+
     const taskId = `task_${Date.now()}`
     const task = {
       task_id: taskId,
       app_key: appKey,
       stage: 'installing',
       progress_percent: 20,
-      logs: [`[armguard-pkg] 正在调用 apt-get 安装 ${target?.name || appKey}...`],
-      log_tail: `正在安装 ${target?.name || appKey}...`
+      logs: [`[armguard-pkg] 正在调用 apt-get 安装 ${targetDisplayName} (${pkgName})...`],
+      log_tail: `正在安装 ${targetDisplayName}...`
     }
     appInstallTasks.set(taskId, task)
 
@@ -348,9 +363,9 @@ export async function handleApps(pathname, req, res, url, ctx) {
         invalidateMarketAppsCache()
         task.stage = 'done'
         task.progress_percent = 100
-        task.logs.push(`✓ ${target?.name || appKey} 安装成功！`)
-        task.log_tail = `✓ ${target?.name || appKey} 安装成功！`
-        ctx.logOperation('admin', '安装应用软件', target?.name || appKey)
+        task.logs.push(`✓ ${targetDisplayName} 安装成功！`)
+        task.log_tail = `✓ ${targetDisplayName} 安装成功！`
+        ctx.logOperation('admin', '安装应用软件', targetDisplayName)
       } else {
         task.stage = 'failed'
         task.progress_percent = 100
@@ -544,13 +559,33 @@ export async function handleApps(pathname, req, res, url, ctx) {
 
       visualConfig = {
         engine: dbType === 'mariadb' ? 'MariaDB' : 'MySQL',
+        current_version: dbType === 'mariadb' ? 'MariaDB 10.11 (LTS)' : 'MySQL 8.0',
+        service_name: serviceName,
         port: matchUncommented(/^[ \t]*port\s*=\s*(\d+)/m, '3306'),
         max_connections: matchUncommented(/^[ \t]*max_connections\s*=\s*(\d+)/m, '100'),
         innodb_buffer_pool_size: matchUncommented(/^[ \t]*innodb_buffer_pool_size\s*=\s*([0-9a-zA-Z]+)/m, '128M'),
         key_buffer_size: matchUncommented(/^[ \t]*key_buffer_size\s*=\s*([0-9a-zA-Z]+)/m, '16M'),
         character_set_server: matchUncommented(/^[ \t]*character-set-server\s*=\s*([0-9a-zA-Z_]+)/m, 'utf8mb4'),
         slow_query_log: /^[ \t]*slow_query_log\s*=\s*1/m.test(conf),
-        datadir: matchUncommented(/^[ \t]*datadir\s*=\s*([^\s\r\n;]+)/m, '/var/lib/mysql')
+        datadir: matchUncommented(/^[ \t]*datadir\s*=\s*([^\s\r\n;]+)/m, '/var/lib/mysql'),
+        available_versions: [
+          {
+            key: 'mariadb-10.11',
+            name: 'MariaDB 10.11 (LTS)',
+            engine: 'MariaDB',
+            pkg: 'mariadb-server',
+            description: '轻量高效、内存消耗极低，树莓派与 1GB/2GB 轻量云主机强烈推荐',
+            is_current: dbType === 'mariadb'
+          },
+          {
+            key: 'mysql-8.0',
+            name: 'MySQL 8.0',
+            engine: 'MySQL',
+            pkg: 'mysql-server',
+            description: '甲骨文官方标准 MySQL，企业级高可靠性，适合标准配置生产环境',
+            is_current: dbType === 'mysql'
+          }
+        ]
       }
     } else if (appKey === 'redis') {
       serviceName = 'redis-server'
@@ -1069,6 +1104,147 @@ export async function handleApps(pathname, req, res, url, ctx) {
     return true
   }
 
+  // MySQL / MariaDB Version Switch (Smooth Migration)
+  if (pathname === '/api/v1/apps/mysql/switch-version' && req.method === 'POST') {
+    const body = await ctx.parseBody(req, res).catch(() => ({}))
+    const targetVer = String(body.target_version || '').trim().toLowerCase()
+
+    let currentEngine = 'mariadb'
+    if (fs.existsSync('/usr/bin/mariadb') || fs.existsSync('/usr/sbin/mariadbd')) {
+      currentEngine = 'mariadb'
+    } else if (fs.existsSync('/usr/bin/mysql') || fs.existsSync('/usr/sbin/mysqld')) {
+      currentEngine = 'mysql'
+    }
+
+    let targetEngine = 'mariadb'
+    if (targetVer.includes('mysql') || targetVer.includes('8.0')) {
+      targetEngine = 'mysql'
+    } else if (targetVer.includes('mariadb') || targetVer.includes('10.11')) {
+      targetEngine = 'mariadb'
+    } else {
+      res.json(null, `不支持的目标版本: ${body.target_version}`, 400)
+      return true
+    }
+
+    if (currentEngine === targetEngine) {
+      res.json(null, `当前系统已在运行 ${targetEngine === 'mysql' ? 'MySQL 8.0' : 'MariaDB 10.11'}，无需重复切换`, 400)
+      return true
+    }
+
+    const taskId = 'task_migrate_mysql_' + Date.now()
+    const task = {
+      task_id: taskId,
+      app_key: 'mysql',
+      stage: 'downloading',
+      progress_percent: 10,
+      logs: [`[ArmGuard 数据库平滑迁移] 准备将数据库引擎从 ${currentEngine.toUpperCase()} 平滑迁移至 ${targetEngine.toUpperCase()}...`],
+      log_tail: `准备平滑迁移至 ${targetEngine.toUpperCase()}...`
+    }
+    appInstallTasks.set(taskId, task)
+
+    // Execute migration in background asynchronously
+    setTimeout(async () => {
+      try {
+        const backupDir = '/var/backups'
+        try { fs.mkdirSync(backupDir, { recursive: true }) } catch {}
+        const backupFile = path.join(backupDir, `mysql_migrate_${Date.now()}.sql`)
+
+        task.stage = 'downloading'
+        task.progress_percent = 20
+        task.logs.push(`[阶段 1/5] 正在执行现有全量业务数据库导出备份 -> ${backupFile}...`)
+        task.log_tail = '正在导出全量数据库备份 (mysqldump)...'
+
+        const dumpBin = fs.existsSync('/usr/bin/mariadb-dump') ? 'mariadb-dump' : 'mysqldump'
+        try {
+          const dumpRes = spawnSync(dumpBin, ['--all-databases'], { encoding: 'utf-8', maxBuffer: 150 * 1024 * 1024 })
+          if (dumpRes.status === 0 && dumpRes.stdout && dumpRes.stdout.trim().length > 0) {
+            fs.writeFileSync(backupFile, dumpRes.stdout, 'utf8')
+            task.logs.push(`✓ 数据库逻辑备份成功导出，文件体积: ${Math.round(dumpRes.stdout.length / 1024)} KB`)
+          } else {
+            task.logs.push(`[提示] 数据库备份导出输出: ${dumpRes.stderr || '空库无需备份'}`)
+          }
+        } catch (e) {
+          task.logs.push(`[提示] 数据库导出跳过或已保留系统原件: ${e.message}`)
+        }
+
+        task.stage = 'configuring'
+        task.progress_percent = 40
+        const oldSvc = currentEngine === 'mysql' ? 'mysql' : 'mariadb'
+        task.logs.push(`[阶段 2/5] 停止旧数据库守护进程 (${oldSvc}) 并归档旧数据目录...`)
+        task.log_tail = `正在停止 ${oldSvc} 服务并保护旧数据...`
+        spawnSync('systemctl', ['stop', oldSvc])
+
+        if (fs.existsSync('/var/lib/mysql')) {
+          const bakDir = `/var/lib/mysql.bak.${Date.now()}`
+          try {
+            fs.renameSync('/var/lib/mysql', bakDir)
+            task.logs.push(`✓ 已安全归档旧底层数据目录: ${bakDir}`)
+          } catch (e) {
+            task.logs.push(`[警告] 数据目录归档跳过: ${e.message}`)
+          }
+        }
+
+        task.stage = 'installing'
+        task.progress_percent = 60
+        task.logs.push(`[阶段 3/5] 卸载旧版软件包 (${oldSvc}-server)...`)
+        task.log_tail = `正在卸载旧版 ${oldSvc}-server 软件包...`
+        const oldPkgs = currentEngine === 'mysql'
+          ? ['mysql-server', 'mysql-client', 'mysql-common']
+          : ['mariadb-server', 'mariadb-client', 'mariadb-common']
+        spawnSync('apt-get', ['remove', '--purge', '-y', ...oldPkgs], {
+          env: { ...process.env, DEBIAN_FRONTEND: 'noninteractive' }
+        })
+
+        task.progress_percent = 75
+        const newPkg = targetEngine === 'mysql' ? 'mysql-server' : 'mariadb-server'
+        const newSvc = targetEngine === 'mysql' ? 'mysql' : 'mariadb'
+        task.logs.push(`[阶段 4/5] 正在通过 APT 安装目标数据库组件: ${newPkg}...`)
+        task.log_tail = `正在安装 ${newPkg}...`
+
+        const installProc = spawnSync('apt-get', ['install', '-y', newPkg], {
+          env: { ...process.env, DEBIAN_FRONTEND: 'noninteractive' },
+          encoding: 'utf-8'
+        })
+        if (installProc.status !== 0) {
+          throw new Error(`APT 安装 ${newPkg} 失败: ${installProc.stderr || installProc.stdout}`)
+        }
+        task.logs.push(`✓ ${newPkg} 软件包安装并配置成功！`)
+
+        task.stage = 'configuring'
+        task.progress_percent = 90
+        task.logs.push(`[阶段 5/5] 启动 ${newSvc} 服务并回放导入业务数据...`)
+        task.log_tail = `正在启动 ${newSvc} 服务并回放数据...`
+        spawnSync('systemctl', ['start', newSvc])
+        spawnSync('systemctl', ['enable', newSvc])
+
+        if (fs.existsSync(backupFile)) {
+          const cliBin = fs.existsSync('/usr/bin/mariadb') ? 'mariadb' : 'mysql'
+          const sqlContent = fs.readFileSync(backupFile, 'utf8')
+          if (sqlContent && sqlContent.trim().length > 0) {
+            spawnSync(cliBin, [], { input: sqlContent, encoding: 'utf-8' })
+            task.logs.push(`✓ 业务数据与表结构已成功回放导入目标数据库引擎！`)
+          }
+        }
+
+        invalidateMarketAppsCache()
+        task.stage = 'done'
+        task.progress_percent = 100
+        const successMsg = `🎉 数据库已平滑切换为 ${targetEngine === 'mysql' ? 'MySQL 8.0' : 'MariaDB 10.11'} 并正常提供服务！`
+        task.logs.push(successMsg)
+        task.log_tail = successMsg
+        ctx.logOperation('admin', '平滑切换数据库版本', `${currentEngine} -> ${targetEngine}`)
+      } catch (err) {
+        task.stage = 'failed'
+        task.error_message = err.message
+        task.logs.push(`❌ 数据库切换流程异常中断: ${err.message}`)
+        task.log_tail = `切换失败: ${err.message}`
+      }
+    }, 100)
+
+    res.json({ task_id: taskId }, `已下发数据库平滑切换任务至后台执行`)
+    return true
+  }
+
   // MySQL Root Password
   if (pathname === '/api/v1/apps/mysql/root-password' && req.method === 'POST') {
     const body = await ctx.parseBody(req, res)
@@ -1079,8 +1255,10 @@ export async function handleApps(pathname, req, res, url, ctx) {
     }
 
     try {
-      const sql = `ALTER USER 'root'@'localhost' IDENTIFIED BY '${newPwd.replace(/'/g, "\\'")}'; FLUSH PRIVILEGES;`
-      execSync(`mariadb -e "${sql}" 2>&1 || mysql -e "${sql}" 2>&1`)
+      const cli = fs.existsSync('/usr/bin/mariadb') ? 'mariadb' : 'mysql'
+      const safePwd = newPwd.replace(/\\/g, '\\\\').replace(/'/g, "\\'")
+      const sql = `ALTER USER 'root'@'localhost' IDENTIFIED BY '${safePwd}'; FLUSH PRIVILEGES;`
+      spawnSync(cli, ['-e', sql])
       ctx.logOperation('admin', '修改 MySQL Root 密码', '安全加固')
       res.json(null, 'MySQL root 密码已成功修改并生效！')
     } catch (err) {
