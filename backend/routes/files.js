@@ -2,40 +2,104 @@ import fs from 'fs'
 import path from 'path'
 import { spawnSync } from 'child_process'
 
-export const PROTECTED_SYSTEM_PATHS = new Set([
-  '/', '/bin', '/sbin', '/boot', '/dev', '/etc', '/lib', '/lib64',
-  '/proc', '/sys', '/usr', '/var', '/root', '/home', '/mnt', '/media',
-  'C:\\', 'C:\\Windows', 'C:\\Program Files'
-])
-
-export const CRITICAL_SYSTEM_FILES = new Set([
-  '/etc/passwd', '/etc/shadow', '/etc/group', '/etc/gshadow',
-  '/etc/shadow-', '/etc/gshadow-',
-  '/etc/sudoers', '/etc/fstab', '/etc/hosts', '/etc/resolv.conf',
-  '/etc/ssh/sshd_config', '/etc/crontab', '/etc/systemd/system/armguard.service',
-  '/var/lib/armguard/users.json'
-])
-
-export const CRITICAL_PREFIXES = [
-  '/boot', '/proc', '/sys', '/dev', '/run',
-  '/etc/ssh', '/etc/sudoers.d', '/etc/systemd', '/lib/systemd',
-  '/usr/bin', '/usr/sbin', '/root/.ssh'
+export const ALLOWED_SANDBOX_ROOTS = [
+  '/www',
+  '/var/www',
+  '/var/backups',
+  '/var/log/nginx',
+  '/tmp'
 ]
 
+export const FORBIDDEN_PREFIXES = [
+  '/etc',
+  '/opt/armguard',
+  '/var/lib/armguard',
+  '/root',
+  '/boot',
+  '/proc',
+  '/sys',
+  '/dev',
+  '/run',
+  '/bin',
+  '/sbin',
+  '/lib',
+  '/lib64',
+  '/usr',
+  '/var/spool',
+  '/var/run'
+]
+
+export const SENSITIVE_BASENAMES = new Set([
+  '.env',
+  'id_rsa',
+  'id_ed25519',
+  'authorized_keys',
+  'known_hosts',
+  'shadow',
+  'passwd',
+  'sudoers',
+  'settings.json',
+  'users.json',
+  'ai_config.json',
+  'dev_server.js',
+  '.bash_history',
+  '.bashrc',
+  '.profile',
+  'ld.so.preload'
+])
+
 export function isProtectedPath(targetPath) {
-  if (!targetPath) return true
+  if (!targetPath || typeof targetPath !== 'string') return true
   const resolved = path.resolve(targetPath)
   const posixPath = resolved.replace(/\\/g, '/').replace(/^[a-zA-Z]:/, '')
-  if (PROTECTED_SYSTEM_PATHS.has(resolved) || PROTECTED_SYSTEM_PATHS.has(posixPath)) return true
-  if (CRITICAL_SYSTEM_FILES.has(resolved) || CRITICAL_SYSTEM_FILES.has(posixPath)) return true
-  for (const prefix of CRITICAL_PREFIXES) {
-    if (resolved.startsWith(prefix) || posixPath.startsWith(prefix)) return true
+  const baseName = path.basename(posixPath).toLowerCase()
+
+  // 1. Block sensitive file basenames & SSH / hidden credentials
+  if (SENSITIVE_BASENAMES.has(baseName)) return true
+  if (posixPath.endsWith('/.env') || posixPath.includes('/.ssh/')) return true
+
+  // 2. Check forbidden system prefixes on posixPath
+  for (const prefix of FORBIDDEN_PREFIXES) {
+    if (posixPath === prefix || posixPath.startsWith(prefix + '/')) {
+      return true
+    }
   }
-  if (posixPath.endsWith('/.env') || posixPath.endsWith('/id_rsa') || posixPath.endsWith('/id_ed25519') || posixPath.endsWith('/authorized_keys')) {
+
+  // 3. Resolve symlinks if path exists to prevent traversal
+  try {
+    if (fs.existsSync(resolved)) {
+      const real = fs.realpathSync(resolved)
+      const realPosix = real.replace(/\\/g, '/').replace(/^[a-zA-Z]:/, '')
+      const realBase = path.basename(realPosix).toLowerCase()
+      if (SENSITIVE_BASENAMES.has(realBase)) return true
+      for (const prefix of FORBIDDEN_PREFIXES) {
+        if (realPosix === prefix || realPosix.startsWith(prefix + '/')) {
+          return true
+        }
+      }
+      if (process.platform !== 'win32') {
+        const isRealInsideSandbox = ALLOWED_SANDBOX_ROOTS.some(root =>
+          realPosix === root || realPosix.startsWith(root + '/')
+        )
+        if (!isRealInsideSandbox) return true
+      }
+    }
+  } catch {}
+
+  // 4. Sandbox Root enforcement
+  if (process.platform === 'win32') {
+    const winLower = resolved.toLowerCase()
+    if (winLower.startsWith('c:\\windows') || winLower.startsWith('c:\\program files')) return true
+    return false
+  }
+
+  const isInsideSandbox = ALLOWED_SANDBOX_ROOTS.some(root =>
+    posixPath === root || posixPath.startsWith(root + '/')
+  )
+  if (!isInsideSandbox) {
     return true
   }
-  const parts = resolved.split(path.sep).filter(Boolean)
-  if (parts.length <= 1) return true
+
   return false
 }
 
@@ -44,9 +108,14 @@ export async function handleFiles(pathname, req, res, url, ctx) {
 
   // 1. File List
   if (pathname === '/api/v1/files/list') {
-    const targetDir = url.searchParams.get('path') || '/opt/armguard'
+    const defaultDir = fs.existsSync('/www/wwwroot') ? '/www/wwwroot' : (fs.existsSync('/www') ? '/www' : (process.platform === 'win32' ? process.cwd() : '/tmp'))
+    const targetDir = url.searchParams.get('path') || defaultDir
     try {
       const safeDir = path.resolve(targetDir)
+      if (isProtectedPath(safeDir)) {
+        res.json(null, `安全拦截：禁止访问系统受保护目录 [${safeDir}]！`, 403)
+        return true
+      }
       const entries = fs.readdirSync(safeDir, { withFileTypes: true })
       const fileList = entries.map(e => {
         const fullPath = path.join(safeDir, e.name)
@@ -191,8 +260,8 @@ export async function handleFiles(pathname, req, res, url, ctx) {
   // 6. Upload
   if (pathname === '/api/v1/files/upload' && req.method === 'POST') {
     try {
-      const { fields, files } = await ctx.parseMultipart(req)
-      const targetDir = fields.path || '/opt/armguard'
+      const defaultDir = fs.existsSync('/www/wwwroot') ? '/www/wwwroot' : (fs.existsSync('/www') ? '/www' : (process.platform === 'win32' ? process.cwd() : '/tmp'))
+      const targetDir = fields.path || defaultDir
       const safeDir = path.resolve(targetDir)
       if (ctx.isProtectedPath(safeDir)) {
         res.json(null, `安全拦截：禁止上传到系统受保护路径 [${safeDir}]`, 403)
@@ -297,6 +366,17 @@ export async function handleFiles(pathname, req, res, url, ctx) {
     }
     const parentDir = path.dirname(path.resolve(paths[0]))
     const targetPath = path.join(parentDir, targetName)
+    if (isProtectedPath(parentDir) || isProtectedPath(targetPath)) {
+      res.json(null, '安全拦截：压缩目标路径位于受保护区域！', 403)
+      return true
+    }
+    for (const p of paths) {
+      const fullP = path.resolve(parentDir, p)
+      if (isProtectedPath(fullP)) {
+        res.json(null, `安全拦截：禁止压缩系统受保护文件 [${fullP}]！`, 403)
+        return true
+      }
+    }
     try {
       const fileNames = paths.map(p => path.basename(path.resolve(p)))
       if (format === 'zip') {
@@ -318,6 +398,10 @@ export async function handleFiles(pathname, req, res, url, ctx) {
     const body = await ctx.parseBody(req, res)
     const archivePath = path.resolve(body.path || '')
     const destPath = path.resolve(body.dest_path || path.dirname(archivePath))
+    if (isProtectedPath(archivePath) || isProtectedPath(destPath)) {
+      res.json(null, '安全拦截：解压路径位于系统受保护区域！', 403)
+      return true
+    }
     if (!fs.existsSync(archivePath)) {
       res.json(null, '压缩包不存在', 404)
       return true

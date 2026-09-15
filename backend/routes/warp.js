@@ -171,8 +171,10 @@ export function getRealWarpTrace(forceRefresh = false) {
 
 export function registerWarpAccountReal(ctx) {
   try {
-    const privkey = execSync('wg genkey 2>/dev/null || true').toString().trim()
-    const pubkey = execSync(`echo "${privkey}" | wg pubkey 2>/dev/null || true`).toString().trim()
+    const genRes = spawnSync('wg', ['genkey'], { encoding: 'utf-8' })
+    const privkey = (genRes.stdout || '').trim()
+    const pubRes = spawnSync('wg', ['pubkey'], { input: privkey, encoding: 'utf-8' })
+    const pubkey = (pubRes.stdout || '').trim()
     if (!pubkey) throw new Error('无法生成 WireGuard 密钥对，请确保已安装 wireguard-tools')
 
     const postData = JSON.stringify({

@@ -921,11 +921,23 @@ export async function handleApps(pathname, req, res, url, ctx) {
         fs.writeFileSync(confPath, JSON.stringify(confObj, null, 2), 'utf8')
         execSync('systemctl restart docker 2>/dev/null || true')
       } else if (appKey === 'nodejs' && cfg.registry) {
-        execSync(`npm config set registry ${cfg.registry} 2>/dev/null || true`)
+        const safeRegistry = String(cfg.registry).trim()
+        if (/^https?:\/\/[a-zA-Z0-9_.:\/-]+$/.test(safeRegistry)) {
+          spawnSync('npm', ['config', 'set', 'registry', safeRegistry])
+        }
       } else if (appKey === 'git') {
-        if (cfg.user_name) execSync(`git config --global user.name "${cfg.user_name}"`)
-        if (cfg.user_email) execSync(`git config --global user.email "${cfg.user_email}"`)
-        if (cfg.default_branch) execSync(`git config --global init.defaultBranch "${cfg.default_branch}"`)
+        if (cfg.user_name) {
+          const safeName = String(cfg.user_name).replace(/[\r\n]/g, '').slice(0, 100)
+          spawnSync('git', ['config', '--global', 'user.name', safeName])
+        }
+        if (cfg.user_email) {
+          const safeEmail = String(cfg.user_email).replace(/[\r\n]/g, '').slice(0, 100)
+          spawnSync('git', ['config', '--global', 'user.email', safeEmail])
+        }
+        if (cfg.default_branch) {
+          const safeBranch = String(cfg.default_branch).replace(/[^a-zA-Z0-9_.-]/g, '').slice(0, 50)
+          if (safeBranch) spawnSync('git', ['config', '--global', 'init.defaultBranch', safeBranch])
+        }
       } else if (appKey === 'warp') {
         Object.assign(warpConfig, cfg)
         ctx.saveJSON('/var/lib/armguard/warp_config.json', warpConfig)
@@ -1028,7 +1040,9 @@ export async function handleApps(pathname, req, res, url, ctx) {
     }
     appInstallTasks.set(taskId, task)
 
-    const child = spawn('bash', ['-c', `DEBIAN_FRONTEND=noninteractive apt-get install -y ${pkgs}`])
+    const child = spawn('apt-get', ['install', '-y', `php${targetVersion}-fpm`, `php${targetVersion}-cli`, `php${targetVersion}-common`, `php${targetVersion}-opcache`], {
+      env: { ...process.env, DEBIAN_FRONTEND: 'noninteractive' }
+    })
     child.stdout.on('data', (d) => {
       const text = d.toString()
       task.logs.push(text)

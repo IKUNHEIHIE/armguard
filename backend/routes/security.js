@@ -1,5 +1,19 @@
 import fs from 'fs'
+import net from 'net'
 import { spawnSync, execSync } from 'child_process'
+
+function isValidIpOrCidr(ipStr) {
+  if (!ipStr || typeof ipStr !== 'string') return false
+  const trimmed = ipStr.trim()
+  if (net.isIP(trimmed)) return true
+  if (trimmed.includes('/')) {
+    const [ip, mask] = trimmed.split('/')
+    const maskNum = Number(mask)
+    if (net.isIPv4(ip) && Number.isInteger(maskNum) && maskNum >= 0 && maskNum <= 32) return true
+    if (net.isIPv6(ip) && Number.isInteger(maskNum) && maskNum >= 0 && maskNum <= 128) return true
+  }
+  return false
+}
 
 export async function handleSecurity(pathname, req, res, url, ctx) {
   if (!pathname.startsWith('/api/v1/firewall/')) return false
@@ -100,15 +114,15 @@ export async function handleSecurity(pathname, req, res, url, ctx) {
 
       if (type === 'ip_block') {
         const srcIp = String(body.source_ip || '').trim()
-        if (!srcIp) {
-          res.json(null, '请提供要拦截的来源 IP 地址', 400)
+        if (!srcIp || !isValidIpOrCidr(srcIp)) {
+          res.json(null, '请提供有效的来源 IP 或 CIDR 地址', 400)
           return true
         }
         try {
           if (srcIp.includes(':')) {
-            execSync(`ip6tables -I INPUT 1 -s ${srcIp} -m comment --comment "${desc}" -j DROP 2>/dev/null || true`)
+            spawnSync('ip6tables', ['-I', 'INPUT', '1', '-s', srcIp, '-m', 'comment', '--comment', desc, '-j', 'DROP'])
           } else {
-            execSync(`iptables -I INPUT 1 -s ${srcIp} -m comment --comment "${desc}" -j DROP 2>/dev/null || true`)
+            spawnSync('iptables', ['-I', 'INPUT', '1', '-s', srcIp, '-m', 'comment', '--comment', desc, '-j', 'DROP'])
           }
           ctx.logOperation('admin', '添加防火墙 IP 拦截黑名单', srcIp)
           res.json(null, `IP [${srcIp}] 已成功加入黑名单拦截！`)
@@ -121,6 +135,7 @@ export async function handleSecurity(pathname, req, res, url, ctx) {
 
       // Port Rule
       let proto = String(body.protocol || 'tcp').toLowerCase()
+      if (!['tcp', 'udp', 'tcp/udp'].includes(proto)) proto = 'tcp'
       const rawPort = String(body.port || '').trim().replace('-', ':')
       const srcIp = String(body.source_ip || '0.0.0.0/0').trim()
 
@@ -128,19 +143,27 @@ export async function handleSecurity(pathname, req, res, url, ctx) {
         res.json(null, '端口格式不正确，支持单个端口(如 8080)或范围(如 3000:4000)', 400)
         return true
       }
+      if (srcIp && srcIp !== '0.0.0.0/0' && !isValidIpOrCidr(srcIp)) {
+        res.json(null, '来源 IP 格式不正确', 400)
+        return true
+      }
 
       try {
         const protocols = proto === 'tcp/udp' ? ['tcp', 'udp'] : [proto]
         for (const p of protocols) {
-          let iptCmd = `iptables -I INPUT 1 -p ${p}`
-          if (srcIp && srcIp !== '0.0.0.0/0' && !srcIp.includes(':')) iptCmd += ` -s ${srcIp}`
-          iptCmd += ` --dport ${rawPort} -m comment --comment "${desc}" -j ${action}`
-          execSync(iptCmd)
+          if (!srcIp.includes(':')) {
+            const iptArgs = ['-I', 'INPUT', '1', '-p', p]
+            if (srcIp && srcIp !== '0.0.0.0/0') iptArgs.push('-s', srcIp)
+            iptArgs.push('--dport', rawPort, '-m', 'comment', '--comment', desc, '-j', action)
+            spawnSync('iptables', iptArgs)
+          }
 
-          let ip6Cmd = `ip6tables -I INPUT 1 -p ${p}`
-          if (srcIp && srcIp.includes(':')) ip6Cmd += ` -s ${srcIp}`
-          ip6Cmd += ` --dport ${rawPort} -m comment --comment "${desc}" -j ${action}`
-          execSync(`${ip6Cmd} 2>/dev/null || true`)
+          if (srcIp === '0.0.0.0/0' || srcIp.includes(':')) {
+            const ip6Args = ['-I', 'INPUT', '1', '-p', p]
+            if (srcIp && srcIp !== '0.0.0.0/0') ip6Args.push('-s', srcIp)
+            ip6Args.push('--dport', rawPort, '-m', 'comment', '--comment', desc, '-j', action)
+            spawnSync('ip6tables', ip6Args)
+          }
         }
 
         ctx.logOperation('admin', '添加防火墙放行规则', `${proto.toUpperCase()}:${rawPort}`)
@@ -162,23 +185,26 @@ export async function handleSecurity(pathname, req, res, url, ctx) {
       // 1. Delete old rule if raw_spec is provided
       if (oldRawSpec) {
         try {
-          execSync(`iptables -D INPUT ${oldRawSpec} 2>/dev/null || true`)
-          execSync(`ip6tables -D INPUT ${oldRawSpec} 2>/dev/null || true`)
+          const safeTokens = String(oldRawSpec).trim().split(/\s+/).filter(t => /^[a-zA-Z0-9_.:\/-]+$/.test(t))
+          if (safeTokens.length > 0) {
+            spawnSync('iptables', ['-D', 'INPUT', ...safeTokens])
+            spawnSync('ip6tables', ['-D', 'INPUT', ...safeTokens])
+          }
         } catch {}
       }
 
       // 2. Insert new rule
       if (type === 'ip_block') {
         const srcIp = String(body.source_ip || '').trim()
-        if (!srcIp) {
-          res.json(null, '请提供要拦截的来源 IP 地址', 400)
+        if (!srcIp || !isValidIpOrCidr(srcIp)) {
+          res.json(null, '请提供有效的来源 IP 或 CIDR 地址', 400)
           return true
         }
         try {
           if (srcIp.includes(':')) {
-            execSync(`ip6tables -I INPUT 1 -s ${srcIp} -m comment --comment "${desc}" -j DROP 2>/dev/null || true`)
+            spawnSync('ip6tables', ['-I', 'INPUT', '1', '-s', srcIp, '-m', 'comment', '--comment', desc, '-j', 'DROP'])
           } else {
-            execSync(`iptables -I INPUT 1 -s ${srcIp} -m comment --comment "${desc}" -j DROP 2>/dev/null || true`)
+            spawnSync('iptables', ['-I', 'INPUT', '1', '-s', srcIp, '-m', 'comment', '--comment', desc, '-j', 'DROP'])
           }
           ctx.logOperation('admin', '修改防火墙规则(黑名单)', srcIp)
           res.json(null, `规则修改成功！IP [${srcIp}] 拦截已生效`)
@@ -191,6 +217,7 @@ export async function handleSecurity(pathname, req, res, url, ctx) {
 
       // Port Rule
       let proto = String(body.protocol || 'tcp').toLowerCase()
+      if (!['tcp', 'udp', 'tcp/udp'].includes(proto)) proto = 'tcp'
       const rawPort = String(body.port || '').trim().replace('-', ':')
       const srcIp = String(body.source_ip || '0.0.0.0/0').trim()
 
@@ -198,19 +225,27 @@ export async function handleSecurity(pathname, req, res, url, ctx) {
         res.json(null, '端口格式不正确，支持单个端口(如 8080)或范围(如 3000:4000)', 400)
         return true
       }
+      if (srcIp && srcIp !== '0.0.0.0/0' && !isValidIpOrCidr(srcIp)) {
+        res.json(null, '来源 IP 格式不正确', 400)
+        return true
+      }
 
       try {
         const protocols = proto === 'tcp/udp' ? ['tcp', 'udp'] : [proto]
         for (const p of protocols) {
-          let iptCmd = `iptables -I INPUT 1 -p ${p}`
-          if (srcIp && srcIp !== '0.0.0.0/0' && !srcIp.includes(':')) iptCmd += ` -s ${srcIp}`
-          iptCmd += ` --dport ${rawPort} -m comment --comment "${desc}" -j ${action}`
-          execSync(iptCmd)
+          if (!srcIp.includes(':')) {
+            const iptArgs = ['-I', 'INPUT', '1', '-p', p]
+            if (srcIp && srcIp !== '0.0.0.0/0') iptArgs.push('-s', srcIp)
+            iptArgs.push('--dport', rawPort, '-m', 'comment', '--comment', desc, '-j', action)
+            spawnSync('iptables', iptArgs)
+          }
 
-          let ip6Cmd = `ip6tables -I INPUT 1 -p ${p}`
-          if (srcIp && srcIp.includes(':')) ip6Cmd += ` -s ${srcIp}`
-          ip6Cmd += ` --dport ${rawPort} -m comment --comment "${desc}" -j ${action}`
-          execSync(`${ip6Cmd} 2>/dev/null || true`)
+          if (srcIp === '0.0.0.0/0' || srcIp.includes(':')) {
+            const ip6Args = ['-I', 'INPUT', '1', '-p', p]
+            if (srcIp && srcIp !== '0.0.0.0/0') ip6Args.push('-s', srcIp)
+            ip6Args.push('--dport', rawPort, '-m', 'comment', '--comment', desc, '-j', action)
+            spawnSync('ip6tables', ip6Args)
+          }
         }
 
         ctx.logOperation('admin', '修改防火墙规则', `${proto.toUpperCase()}:${rawPort}`)
@@ -230,10 +265,14 @@ export async function handleSecurity(pathname, req, res, url, ctx) {
     const body = await ctx.parseBody(req, res).catch(() => ({}))
     try {
       if (body && body.raw_spec) {
-        execSync(`iptables -D INPUT ${body.raw_spec} 2>/dev/null || true`)
-        execSync(`ip6tables -D INPUT ${body.raw_spec} 2>/dev/null || true`)
-      } else {
-        execSync(`iptables -D INPUT ${id} 2>/dev/null || true`)
+        const safeTokens = String(body.raw_spec).trim().split(/\s+/).filter(t => /^[a-zA-Z0-9_.:\/-]+$/.test(t))
+        if (safeTokens.length > 0) {
+          spawnSync('iptables', ['-D', 'INPUT', ...safeTokens])
+          spawnSync('ip6tables', ['-D', 'INPUT', ...safeTokens])
+        }
+      } else if (/^\d+$/.test(id)) {
+        spawnSync('iptables', ['-D', 'INPUT', id])
+        spawnSync('ip6tables', ['-D', 'INPUT', id])
       }
       ctx.logOperation('admin', '删除防火墙规则', `Rule #${id}`)
       res.json(null, '防火墙规则已成功删除')

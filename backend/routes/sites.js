@@ -35,7 +35,24 @@ export function renderNginxSiteConf(site, ctx) {
   } else if (site.rewrite_preset === 'typecho') {
     rewriteRules = `\n    if (!-e $request_filename) {\n        rewrite ^(.*)$ /index.php$1 last;\n    }`
   } else if (site.custom_rewrite) {
-    rewriteRules = `\n    ${site.custom_rewrite.trim()}`
+    const raw = site.custom_rewrite.trim()
+    const forbiddenPatterns = [
+      /ssl_certificate/i,
+      /access_log/i,
+      /error_log/i,
+      /include\s+/i,
+      /\broot\s+\/\s*;/i,
+      /\balias\s+\/\s*;/i,
+      /fastcgi_pass/i,
+      /proxy_pass/i,
+      /client_body_temp_path/i
+    ]
+    const openBraces = (raw.match(/\{/g) || []).length
+    const closeBraces = (raw.match(/\}/g) || []).length
+    const hasForbidden = forbiddenPatterns.some(p => p.test(raw))
+    if (!hasForbidden && openBraces === closeBraces) {
+      rewriteRules = `\n    ${raw}`
+    }
   }
 
   // PHP-FPM
@@ -58,11 +75,17 @@ export function renderNginxSiteConf(site, ctx) {
   // Reverse Proxy
   let proxyDirectives = ''
   if (site.proxy_enabled && site.proxy_pass) {
-    if (site.grpc_enabled) {
-      proxyDirectives = `\n    location ${site.proxy_path || '/'} {\n        grpc_pass ${site.proxy_pass};\n        grpc_set_header Host $host;\n        grpc_set_header X-Real-IP $remote_addr;\n        grpc_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        grpc_read_timeout 300s;\n        grpc_send_timeout 300s;\n        client_max_body_size 100m;\n    }`
-    } else {
-      const wsHeaders = site.websocket_enabled !== false ? `\n        proxy_http_version 1.1;\n        proxy_set_header Upgrade $http_upgrade;\n        proxy_set_header Connection "upgrade";` : ''
-      proxyDirectives = `\n    location ${site.proxy_path || '/'} {\n        proxy_pass ${site.proxy_pass};\n        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_set_header X-Forwarded-Proto $scheme;${wsHeaders}\n        client_max_body_size 100m;\n    }`
+    const safePass = String(site.proxy_pass).trim()
+    const safePath = String(site.proxy_path || '/').trim()
+    const isValidPass = /^(https?|grpc|grpcs):\/\/[a-zA-Z0-9_.:-]+(\/[a-zA-Z0-9_.~%-]*)?$|^unix:[a-zA-Z0-9_.\/-]+$/.test(safePass)
+    const isValidPath = /^\/[a-zA-Z0-9_.\/-]*$/.test(safePath)
+    if (isValidPass && isValidPath) {
+      if (site.grpc_enabled) {
+        proxyDirectives = `\n    location ${safePath} {\n        grpc_pass ${safePass};\n        grpc_set_header Host $host;\n        grpc_set_header X-Real-IP $remote_addr;\n        grpc_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        grpc_read_timeout 300s;\n        grpc_send_timeout 300s;\n        client_max_body_size 100m;\n    }`
+      } else {
+        const wsHeaders = site.websocket_enabled !== false ? `\n        proxy_http_version 1.1;\n        proxy_set_header Upgrade $http_upgrade;\n        proxy_set_header Connection "upgrade";` : ''
+        proxyDirectives = `\n    location ${safePath} {\n        proxy_pass ${safePass};\n        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_set_header X-Forwarded-Proto $scheme;${wsHeaders}\n        client_max_body_size 100m;\n    }`
+      }
     }
   }
 
@@ -149,7 +172,10 @@ export async function handleSites(pathname, req, res, url, ctx) {
 
       const confContent = renderNginxSiteConf(newSite, ctx)
       fs.writeFileSync(path.join(ctx.NGINX_CONF_DIR, `${body.domain}.conf`), confContent, 'utf8')
-      try { execSync('nginx -t && systemctl reload nginx 2>/dev/null || true') } catch {}
+      try {
+        const t = spawnSync('nginx', ['-t'])
+        if (t.status === 0) spawnSync('systemctl', ['reload', 'nginx'])
+      } catch {}
 
       ctx.sites.unshift(newSite)
       ctx.saveJSON(ctx.SITES_FILE, ctx.sites)
@@ -287,7 +313,7 @@ export async function handleSites(pathname, req, res, url, ctx) {
         res.json(null, `Nginx 配置测试未通过: ${testRes.stderr}`, 500)
         return true
       }
-      try { execSync('systemctl reload nginx 2>/dev/null || true') } catch {}
+      try { spawnSync('systemctl', ['reload', 'nginx']) } catch {}
       ctx.logOperation('admin', '更新 Nginx 配置文件', target?.domain)
       res.json(null, '配置保存并重载成功')
       return true

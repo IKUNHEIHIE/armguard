@@ -410,21 +410,7 @@ let settings = loadJSON(SETTINGS_FILE, {
 
 let aiConfig = loadJSON(AI_CONFIG_FILE, DEFAULT_AI_CONFIG)
 
-// Shared Application Context Object
-const ctx = {
-  DATA_DIR, USERS_FILE, SITES_FILE, DATABASES_FILE, CERTS_FILE, CRONTAB_FILE,
-  SETTINGS_FILE, AI_CONFIG_FILE, OPS_LOG_FILE, BACKUP_DIR, SSL_DIR, NGINX_CONF_DIR, WWW_ROOT,
-  STREAM_RULES_FILE, STREAM_CONF_DIR,
-  sites, databases, sslCerts, crontabs, streamRules, settings, aiConfig,
-  loadJSON, saveJSON, getOpsLogs, logOperation, hashPassword, verifyPassword,
-  generateSessionToken, revokeSessionToken, isValidToken, isValidDomain, parseBody, parseMultipart,
-  isProtectedPath, staticCache, getStaticFile,
-  cachedTelemetry, cachedThermal, getRealProcesses, getRealMemStats, getRealDiskStats, getRealCPUPercent
-}
-
-initWarpConfig(ctx)
-
-// IP Whitelist Helpers
+// IP Whitelist & Network Helpers
 function matchCidr(ip, cidr) {
   try {
     const [range, bits = '32'] = cidr.split('/')
@@ -463,10 +449,38 @@ function parseCookies(req) {
   return list
 }
 
+function getClientIp(req, currentSettings = null) {
+  const socketIp = (req.socket?.remoteAddress || '127.0.0.1').replace(/^::ffff:/, '').trim()
+  if (currentSettings && currentSettings.trust_proxy) {
+    if (socketIp === '127.0.0.1' || socketIp === '::1' || socketIp === 'localhost') {
+      const xff = req.headers['x-forwarded-for']
+      if (xff) {
+        const client = xff.split(',')[0].trim().replace(/^::ffff:/, '')
+        if (client) return client
+      }
+    }
+  }
+  return socketIp
+}
+
+// Shared Application Context Object
+const ctx = {
+  DATA_DIR, USERS_FILE, SITES_FILE, DATABASES_FILE, CERTS_FILE, CRONTAB_FILE,
+  SETTINGS_FILE, AI_CONFIG_FILE, OPS_LOG_FILE, BACKUP_DIR, SSL_DIR, NGINX_CONF_DIR, WWW_ROOT,
+  STREAM_RULES_FILE, STREAM_CONF_DIR,
+  sites, databases, sslCerts, crontabs, streamRules, settings, aiConfig,
+  loadJSON, saveJSON, getOpsLogs, logOperation, hashPassword, verifyPassword,
+  generateSessionToken, revokeSessionToken, isValidToken, isValidDomain, parseBody, parseMultipart,
+  isProtectedPath, staticCache, getStaticFile, getClientIp,
+  cachedTelemetry, cachedThermal, getRealProcesses, getRealMemStats, getRealDiskStats, getRealCPUPercent
+}
+
+initWarpConfig(ctx)
+
 // HTTP Server
 const server = http.createServer(async (req, res) => {
-  const clientIp = (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress || '127.0.0.1'
   const currentSettings = loadJSON(SETTINGS_FILE, settings)
+  const clientIp = getClientIp(req, currentSettings)
 
   // 1. IP Whitelist Enforcement
   if (!isIpAllowed(clientIp, currentSettings.ip_whitelist)) {
@@ -480,19 +494,15 @@ const server = http.createServer(async (req, res) => {
   if (origin) {
     const host = req.headers['host']
     try {
-      const originHost = new URL(origin).host
-      if (originHost === host || origin.includes('localhost') || origin.includes('127.0.0.1')) {
+      const parsed = new URL(origin)
+      if (parsed.host === host || parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') {
         res.setHeader('Access-Control-Allow-Origin', origin)
+        res.setHeader('Access-Control-Allow-Credentials', 'true')
       }
-    } catch {
-      res.setHeader('Access-Control-Allow-Origin', origin)
-    }
-  } else {
-    res.setHeader('Access-Control-Allow-Origin', '*')
+    } catch {}
   }
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Token, X-Security-Entrance')
-  res.setHeader('Access-Control-Allow-Credentials', 'true')
 
   res.json = (data = null, message = 'ok', code = 0) => {
     if (res.headersSent) return
@@ -565,8 +575,9 @@ const server = http.createServer(async (req, res) => {
     if (await handleWarp(pathname, req, res, url, ctx)) return
     if (await handleStream(pathname, req, res, url, ctx)) return
 
-    // Fallback for unmatched API endpoints
-    res.json({}, 'ok')
+    // Fallback for unmatched API endpoints - standard 404
+    res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8' })
+    res.end(JSON.stringify({ code: 404, message: `API 接口不存在 (Endpoint Not Found): ${pathname}`, data: null }))
     return
   }
 
@@ -644,19 +655,65 @@ const server = http.createServer(async (req, res) => {
   }
 })
 
-// WebSocket Server
-const wss = new WebSocketServer({ server })
+// WebSocket Server with strict handshake authentication
+const wss = new WebSocketServer({ noServer: true })
+
+server.on('upgrade', (req, socket, head) => {
+  const currentSettings = loadJSON(SETTINGS_FILE, settings)
+  const clientIp = getClientIp(req, currentSettings)
+
+  // 1. Enforce IP Whitelist on WebSocket handshake
+  if (!isIpAllowed(clientIp, currentSettings.ip_whitelist)) {
+    socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n')
+    socket.destroy()
+    return
+  }
+
+  // 2. Enforce Security Entrance on WebSocket handshake
+  const secEntrance = (currentSettings.security_entrance || '').trim()
+  const cookies = parseCookies(req)
+  const hasEntranceCookie = cookies['ag_entrance'] === '1'
+  if (secEntrance && secEntrance !== '/' && !hasEntranceCookie) {
+    socket.write('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n')
+    socket.destroy()
+    return
+  }
+
+  const url = new URL(req.url, `http://${req.headers.host || '127.0.0.1'}`)
+  if (url.pathname !== '/terminal/ws') {
+    socket.write('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n')
+    socket.destroy()
+    return
+  }
+
+  // 3. Enforce Token authentication on WebSocket handshake
+  let token = url.searchParams.get('token') || ''
+  const authHeader = req.headers['authorization'] || ''
+  if (authHeader.startsWith('Bearer ')) {
+    token = authHeader.substring(7).trim()
+  } else if (req.headers['sec-websocket-protocol']) {
+    const protoToken = req.headers['sec-websocket-protocol'].split(',')[0].trim()
+    if (isValidToken(protoToken)) {
+      token = protoToken
+    }
+  }
+
+  if (!token || !isValidToken(token)) {
+    socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n')
+    socket.destroy()
+    return
+  }
+
+  wss.handleUpgrade(req, socket, head, (ws) => {
+    wss.emit('connection', ws, req)
+  })
+})
 
 wss.on('connection', (ws, req) => {
   const url = new URL(req.url, `http://${req.headers.host || '127.0.0.1'}`)
   const pathname = url.pathname
-  const token = url.searchParams.get('token')
 
   if (pathname === '/terminal/ws') {
-    if (!isValidToken(token)) {
-      ws.close(4001, 'Unauthorized')
-      return
-    }
 
     try {
       if (pty) {

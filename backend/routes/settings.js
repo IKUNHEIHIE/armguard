@@ -91,9 +91,7 @@ export async function handleSettings(pathname, req, res, url, ctx) {
     try {
       fs.mkdirSync(ctx.BACKUP_DIR, { recursive: true })
       const backupName = `armguard_panel_backup_${Date.now()}.tar.gz`
-      const backupPath = path.join(ctx.BACKUP_DIR, backupName)
-      
-      execSync(`tar -czf "${backupPath}" -C "${ctx.DATA_DIR}" . 2>/dev/null || true`)
+      spawnSync('tar', ['-czf', backupPath, '-C', ctx.DATA_DIR, '.'])
       
       ctx.logOperation('admin', '创建面板全量数据备份', backupName)
       res.json({
@@ -191,7 +189,7 @@ export async function handleSettings(pathname, req, res, url, ctx) {
     ctx.logOperation('admin', '平滑重启面板核心守护进程', 'PanelEngine')
     res.json(null, '面板正在后台重载生效中，稍后将自动恢复连接...')
     setTimeout(() => {
-      try { execSync('systemctl restart armguard 2>/dev/null || true') } catch {}
+      try { spawnSync('systemctl', ['restart', 'armguard']) } catch {}
     }, 500)
     return true
   }

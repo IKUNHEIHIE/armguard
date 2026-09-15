@@ -15,8 +15,11 @@ setInterval(() => {
   }
 }, 10 * 60 * 1000).unref()
 
-function getClientIp(req) {
-  return (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress || '127.0.0.1'
+function getClientIp(req, ctx = null) {
+  if (ctx && ctx.getClientIp) {
+    return ctx.getClientIp(req, ctx.settings)
+  }
+  return (req.socket?.remoteAddress || '127.0.0.1').replace(/^::ffff:/, '').trim()
 }
 
 function extractToken(req) {
@@ -39,7 +42,7 @@ export async function handleAuth(pathname, req, res, url, ctx) {
   }
 
   if (pathname === '/api/v1/auth/login' && req.method === 'POST') {
-    const clientIp = getClientIp(req)
+    const clientIp = getClientIp(req, ctx)
     const now = Date.now()
 
     // 1. Check if client IP is currently locked out
@@ -59,13 +62,7 @@ export async function handleAuth(pathname, req, res, url, ctx) {
     const password = (body.password || '').trim()
 
     const users = ctx.loadJSON(ctx.USERS_FILE, [])
-    let user = users.find(u => u.username === username)
-    
-    // Only if users.json has no user records at all, initialize default admin user
-    if (!user && users.length === 0) {
-      user = { username: 'admin', password: ctx.hashPassword('password') }
-      ctx.saveJSON(ctx.USERS_FILE, [user])
-    }
+    const user = users.find(u => u.username === username)
 
     const isValid = user && ctx.verifyPassword(password, user.password)
     if (!isValid) {
@@ -99,6 +96,12 @@ export async function handleAuth(pathname, req, res, url, ctx) {
     // Login successful: reset rate limit for this IP
     loginAttempts.delete(clientIp)
 
+    // Smooth hash upgrade: if user password is an older hash format, upgrade to 100,000 iterations
+    if (user.password && !user.password.endsWith(':100000')) {
+      user.password = ctx.hashPassword(password)
+      ctx.saveJSON(ctx.USERS_FILE, users)
+    }
+
     const sessionToken = ctx.generateSessionToken(user.username)
     ctx.logOperation(user.username, '登录面板成功', 'Web Dashboard', clientIp)
     res.json({
@@ -115,14 +118,14 @@ export async function handleAuth(pathname, req, res, url, ctx) {
     if (token && ctx.revokeSessionToken) {
       ctx.revokeSessionToken(token)
     }
-    const clientIp = getClientIp(req)
+    const clientIp = getClientIp(req, ctx)
     ctx.logOperation('admin', '退出面板登录 (会话已销毁)', 'Web Dashboard', clientIp)
     res.json(null, '已成功登出并销毁会话')
     return true
   }
 
   if (pathname === '/api/v1/auth/user-info') {
-    res.json({ id: 1, username: 'admin', role: 'admin', totp_enabled: false, last_login_ip: getClientIp(req) })
+    res.json({ id: 1, username: 'admin', role: 'admin', totp_enabled: false, last_login_ip: getClientIp(req, ctx) })
     return true
   }
 
