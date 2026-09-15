@@ -21,7 +21,7 @@ export async function handleSettings(pathname, req, res, url, ctx) {
         latest_version: 'v0.1.0-alpha',
         has_update: false,
         timezone: 'Asia/Shanghai',
-        api_token: ctx.VALID_TOKEN || 'armguard_live_jwt_token',
+        api_token: ctx.settings?.api_token || '',
         two_factor_enabled: false,
         webhook_enabled: false,
         webhook_type: 'feishu',

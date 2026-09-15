@@ -682,7 +682,7 @@ const settings = reactive<PanelSettings>({
   latest_version: 'v0.1.0-alpha',
   has_update: false,
   timezone: 'Asia/Shanghai',
-  api_token: 'armguard_live_jwt_token',
+  api_token: '',
   two_factor_enabled: false,
   webhook_enabled: false,
   webhook_type: 'feishu',

@@ -345,7 +345,7 @@ function executeMockCommand(cmd: string) {
 
 function connectWebSocket() {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const token = localStorage.getItem('armguard_token') || 'armguard_live_jwt_token'
+  const token = localStorage.getItem('armguard_token') || ''
   const url = `${protocol}//${window.location.host}/terminal/ws?token=${token}`
 
   try {

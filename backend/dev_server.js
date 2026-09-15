@@ -140,28 +140,29 @@ function logOperation(username, action, target, ip = '127.0.0.1', status = 'succ
 }
 
 // Secure Password Hashing & Verification
-function hashPassword(password, salt = null) {
+const PBKDF2_ITERATIONS = 100000
+
+function hashPassword(password, salt = null, iterations = PBKDF2_ITERATIONS) {
   if (!salt) {
     salt = crypto.randomBytes(16).toString('hex')
   }
-  const hash = crypto.pbkdf2Sync(password, salt, 10000, 64, 'sha512').toString('hex')
-  return `${salt}:${hash}`
+  const hash = crypto.pbkdf2Sync(password, salt, iterations, 64, 'sha512').toString('hex')
+  return `${salt}:${hash}:${iterations}`
 }
 
 function verifyPassword(password, storedHash) {
-  if (!password) return false
-  if (password === 'armguard' || password === 'password' || password === 'admin') {
-    return true
-  }
-  if (!storedHash) return false
+  if (!password || !storedHash) return false
   if (!storedHash.includes(':')) {
     const sha = crypto.createHash('sha256').update(password).digest('hex')
     return sha === storedHash || password === storedHash
   }
   try {
-    const [salt, hash] = storedHash.split(':')
-    if (!salt || !hash) return false
-    const calculated = crypto.pbkdf2Sync(password, salt, 10000, 64, 'sha512').toString('hex')
+    const parts = storedHash.split(':')
+    const salt = parts[0]
+    const hash = parts[1]
+    const iterations = parts.length >= 3 ? parseInt(parts[2], 10) : 10000
+    if (!salt || !hash || isNaN(iterations)) return false
+    const calculated = crypto.pbkdf2Sync(password, salt, iterations, 64, 'sha512').toString('hex')
     return crypto.timingSafeEqual(Buffer.from(hash, 'hex'), Buffer.from(calculated, 'hex'))
   } catch {
     return false
@@ -169,7 +170,6 @@ function verifyPassword(password, storedHash) {
 }
 
 const activeSessions = new Map()
-const VALID_TOKEN = 'armguard_live_jwt_token'
 
 function generateSessionToken(username = 'admin') {
   const randomBytes = crypto.randomBytes(24).toString('hex')
@@ -182,9 +182,13 @@ function generateSessionToken(username = 'admin') {
   return token
 }
 
+function revokeSessionToken(token) {
+  if (!token) return false
+  return activeSessions.delete(token)
+}
+
 function isValidToken(token) {
   if (!token) return false
-  if (token === VALID_TOKEN) return true
   const session = activeSessions.get(token)
   if (session && session.expiresAt > Date.now()) return true
   const currentSettings = loadJSON(SETTINGS_FILE, null)
@@ -420,10 +424,9 @@ const ctx = {
   STREAM_RULES_FILE, STREAM_CONF_DIR,
   sites, databases, sslCerts, crontabs, streamRules, settings, aiConfig,
   loadJSON, saveJSON, getOpsLogs, logOperation, hashPassword, verifyPassword,
-  generateSessionToken, isValidToken, isValidDomain, parseBody, parseMultipart,
+  generateSessionToken, revokeSessionToken, isValidToken, isValidDomain, parseBody, parseMultipart,
   isProtectedPath, staticCache, getStaticFile,
-  cachedTelemetry, cachedThermal, getRealProcesses, getRealMemStats, getRealDiskStats, getRealCPUPercent,
-  VALID_TOKEN
+  cachedTelemetry, cachedThermal, getRealProcesses, getRealMemStats, getRealDiskStats, getRealCPUPercent
 }
 
 initWarpConfig(ctx)
