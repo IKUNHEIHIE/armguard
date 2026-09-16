@@ -30,8 +30,19 @@ export interface BackupRecord {
   created_at: string
 }
 
+export interface DatabaseEngineItem {
+  key: string
+  name: string
+  type: string
+  service_name: string | null
+  status: 'running' | 'stopped' | 'unavailable'
+  is_available: boolean
+  description: string
+}
+
 export const databaseApi = {
   getDatabases: (type?: string) => apiClient.get<ApiResponse<{ list: DatabaseItem[] }>>('/databases', { params: { type } }),
+  getAvailableEngines: () => apiClient.get<ApiResponse<{ list: DatabaseEngineItem[] }>>('/databases/engines'),
   createDatabase: (data: CreateDatabaseParams) => apiClient.post<ApiResponse<DatabaseItem>>('/databases', data),
   deleteDatabase: (id: number) => apiClient.delete<ApiResponse<void>>(`/databases/${id}`),
   backupDatabase: (id: number) => apiClient.post<ApiResponse<{ backup_id: number; file_name: string }>>(`/databases/${id}/backup`),

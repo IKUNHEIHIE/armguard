@@ -458,5 +458,214 @@ export async function handleSecurity(pathname, req, res, url, ctx) {
     return true
   }
 
+  // UFW Status
+  if (pathname === '/api/v1/firewall/ufw/status' && req.method === 'GET') {
+    const installed = fs.existsSync('/usr/sbin/ufw')
+    let status = 'inactive'
+    let defaultIncoming = 'deny'
+    let defaultOutgoing = 'allow'
+    let ipv6Enabled = false
+    let rawOutput = ''
+
+    if (installed) {
+      try {
+        const uOut = spawnSync('ufw', ['status', 'verbose'], { encoding: 'utf-8' }).stdout || ''
+        rawOutput = uOut
+        if (uOut.includes('Status: active')) status = 'active'
+        const inMatch = uOut.match(/Default:\s*([^\s,]+)\s*\(incoming\)/i)
+        if (inMatch) defaultIncoming = inMatch[1]
+        const outMatch = uOut.match(/,\s*([^\s,]+)\s*\(outgoing\)/i)
+        if (outMatch) defaultOutgoing = outMatch[1]
+      } catch {}
+
+      try {
+        const dConf = fs.readFileSync('/etc/default/ufw', 'utf8')
+        ipv6Enabled = /IPV6\s*=\s*yes/i.test(dConf)
+      } catch {}
+    }
+
+    res.json({
+      installed,
+      status, // 'active' or 'inactive'
+      default_incoming: defaultIncoming,
+      default_outgoing: defaultOutgoing,
+      ipv6_enabled: ipv6Enabled,
+      raw_output: rawOutput
+    })
+    return true
+  }
+
+  // Scan Listening Ports for Anti-Lockout Preview
+  if (pathname === '/api/v1/firewall/scan-ports' && req.method === 'GET') {
+    let sshPort = 22
+    try {
+      const sshdOut = execSync('sshd -T 2>/dev/null || true').toString()
+      const pM = sshdOut.match(/^port\s+(\d+)/m)
+      if (pM) sshPort = parseInt(pM[1], 10)
+    } catch {}
+
+    const panelPort = parseInt(process.env.PORT || '8888', 10)
+    const portsMap = new Map()
+
+    // Mandatory SSH & Panel ports
+    portsMap.set(`${sshPort}/tcp`, {
+      port: sshPort,
+      protocol: 'tcp',
+      name: `SSH 远程登录 (当前会话通道)`,
+      critical: true,
+      selected: true
+    })
+    portsMap.set(`${panelPort}/tcp`, {
+      port: panelPort,
+      protocol: 'tcp',
+      name: `ArmGuard 控制面板`,
+      critical: true,
+      selected: true
+    })
+
+    try {
+      const ssOut = execSync('ss -tulpn 2>/dev/null || true').toString()
+      const lines = ssOut.split('\n').filter(l => l.includes('LISTEN'))
+      for (const line of lines) {
+        const parts = line.trim().split(/\s+/)
+        if (parts.length < 5) continue
+        const proto = parts[0].toLowerCase().includes('udp') ? 'udp' : 'tcp'
+        const localAddr = parts[4]
+
+        // Skip loopback only
+        if (localAddr.startsWith('127.0.0.') || localAddr.startsWith('[::1]')) continue
+
+        const lastColon = localAddr.lastIndexOf(':')
+        if (lastColon === -1) continue
+        const pNum = parseInt(localAddr.slice(lastColon + 1), 10)
+        if (!pNum || pNum < 1 || pNum > 65535) continue
+
+        const key = `${pNum}/${proto}`
+        if (!portsMap.has(key)) {
+          let desc = '活跃业务监听端口'
+          let critical = false
+          if (pNum === 80) desc = 'HTTP 基础 Web 通信 (Nginx)'
+          else if (pNum === 443) desc = 'HTTPS 加密 Web 通信 (Nginx)'
+          else if (pNum === 2096 || pNum === 61000 || pNum === 48269) desc = 'X-UI / 代理服务端口'
+
+          portsMap.set(key, {
+            port: pNum,
+            protocol: proto,
+            name: desc,
+            critical,
+            selected: true
+          })
+        }
+      }
+    } catch {}
+
+    const scannedList = Array.from(portsMap.values()).sort((a, b) => {
+      if (a.critical && !b.critical) return -1
+      if (!a.critical && b.critical) return 1
+      return a.port - b.port
+    })
+
+    res.json({
+      ssh_port: sshPort,
+      panel_port: panelPort,
+      ports: scannedList
+    })
+    return true
+  }
+
+  // Enable UFW with Anti-Lockout Pipeline
+  if (pathname === '/api/v1/firewall/ufw/enable' && req.method === 'POST') {
+    if (!fs.existsSync('/usr/sbin/ufw')) {
+      res.json(null, '系统未安装 UFW 防火墙软件包', 400)
+      return true
+    }
+
+    const body = await ctx.parseBody(req, res).catch(() => ({}))
+    const extraPorts = Array.isArray(body.ports) ? body.ports : []
+
+    // 1. Mandatory ports that MUST NEVER BE OMITTED
+    let sshPort = 22
+    try {
+      const sshdOut = execSync('sshd -T 2>/dev/null || true').toString()
+      const pM = sshdOut.match(/^port\s+(\d+)/m)
+      if (pM) sshPort = parseInt(pM[1], 10)
+    } catch {}
+    const panelPort = parseInt(process.env.PORT || '8888', 10)
+
+    const portsToAllow = new Set()
+    portsToAllow.add(`${sshPort}/tcp`)
+    portsToAllow.add(`${panelPort}/tcp`)
+
+    for (const p of extraPorts) {
+      if (typeof p === 'number' || (typeof p === 'string' && /^\d+$/.test(p))) {
+        portsToAllow.add(`${p}/tcp`)
+      } else if (typeof p === 'string' && /^\d+\/(tcp|udp)$/i.test(p)) {
+        portsToAllow.add(p.toLowerCase())
+      }
+    }
+
+    try {
+      // Step A: Ensure IPV6 is enabled in /etc/default/ufw
+      try {
+        const ufwConfPath = '/etc/default/ufw'
+        if (fs.existsSync(ufwConfPath)) {
+          let conf = fs.readFileSync(ufwConfPath, 'utf8')
+          if (/IPV6\s*=\s*no/i.test(conf)) {
+            conf = conf.replace(/IPV6\s*=\s*no/gi, 'IPV6=yes')
+            fs.writeFileSync(ufwConfPath, conf, 'utf8')
+          }
+        }
+      } catch (e) {
+        console.warn('Failed to verify IPV6 in /etc/default/ufw:', e.message)
+      }
+
+      // Step B: Inject allow rules BEFORE ufw enable
+      for (const item of portsToAllow) {
+        const [portStr, protoStr] = item.split('/')
+        spawnSync('ufw', ['allow', `${portStr}/${protoStr || 'tcp'}`], { encoding: 'utf-8' })
+      }
+
+      // Step C: Guarantee connection tracking in iptables/ip6tables so current SSH session stays alive
+      try {
+        spawnSync('iptables', ['-I', 'INPUT', '1', '-m', 'conntrack', '--ctstate', 'RELATED,ESTABLISHED', '-j', 'ACCEPT'])
+        spawnSync('ip6tables', ['-I', 'INPUT', '1', '-m', 'conntrack', '--ctstate', 'RELATED,ESTABLISHED', '-j', 'ACCEPT'])
+      } catch {}
+
+      // Step D: Enable UFW in non-interactive force mode
+      const enRes = spawnSync('ufw', ['--force', 'enable'], { encoding: 'utf-8' })
+      if (enRes.status !== 0) {
+        res.json(null, `UFW 启动失败: ${enRes.stderr || enRes.stdout}`, 500)
+        return true
+      }
+
+      ctx.logOperation('admin', '开启 UFW 防火墙 (防失联保护模式)', `已预先放行端口: ${Array.from(portsToAllow).join(', ')}`)
+      res.json({
+        status: 'active',
+        allowed_ports: Array.from(portsToAllow)
+      }, `UFW 防火墙已成功开启！系统已强制预先放行所有关键端口 (${Array.from(portsToAllow).join(', ')})，SSH 与面板通信安全正常。`)
+      return true
+    } catch (err) {
+      res.json(null, `操作失败: ${err.message}`, 500)
+      return true
+    }
+  }
+
+  // Disable UFW
+  if (pathname === '/api/v1/firewall/ufw/disable' && req.method === 'POST') {
+    if (!fs.existsSync('/usr/sbin/ufw')) {
+      res.json(null, '系统未安装 UFW 防火墙', 400)
+      return true
+    }
+    try {
+      const disRes = spawnSync('ufw', ['disable'], { encoding: 'utf-8' })
+      ctx.logOperation('admin', '关闭 UFW 防火墙', '恢复默认开放模式')
+      res.json({ status: 'inactive' }, 'UFW 防火墙已安全停用，底层网络连接已转为开放直通模式。')
+      return true
+    } catch (e) {
+      res.json(null, `停用 UFW 失败: ${e.message}`, 500)
+      return true
+    }
+  }
+
   return false
 }

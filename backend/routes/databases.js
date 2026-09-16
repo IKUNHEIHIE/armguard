@@ -11,8 +11,97 @@ function getDumpCli() {
   return fs.existsSync('/usr/bin/mariadb-dump') ? 'mariadb-dump' : 'mysqldump'
 }
 
+export function detectInstalledEngines() {
+  const engines = []
+
+  // 1. Detect active relational database (MariaDB or MySQL)
+  const hasMariaCli = fs.existsSync('/usr/bin/mariadb')
+  const hasMysqlCli = fs.existsSync('/usr/bin/mysql')
+  let activeService = null
+  let isRunning = false
+
+  try {
+    const actM = spawnSync('systemctl', ['is-active', 'mariadb'], { encoding: 'utf-8' }).stdout.trim()
+    if (actM === 'active') {
+      activeService = 'mariadb'
+      isRunning = true
+    }
+  } catch {}
+
+  if (!isRunning) {
+    try {
+      const actMy = spawnSync('systemctl', ['is-active', 'mysql'], { encoding: 'utf-8' }).stdout.trim()
+      if (actMy === 'active') {
+        activeService = 'mysql'
+        isRunning = true
+      }
+    } catch {}
+  }
+
+  if (hasMariaCli || hasMysqlCli || activeService) {
+    const isMaria = activeService === 'mariadb' || (!activeService && hasMariaCli)
+    let engineVer = ''
+    if (isMaria) {
+      try {
+        const vOut = spawnSync('mariadb', ['--version'], { encoding: 'utf-8' }).stdout
+        const m = vOut.match(/Distrib\s*([0-9.]+)-MariaDB/)
+        engineVer = m ? m[1] : '10.11'
+      } catch {
+        engineVer = '10.11'
+      }
+      engines.push({
+        key: 'mariadb',
+        name: `MariaDB ${engineVer} (ARM 优化推荐)`,
+        type: 'mariadb',
+        service_name: 'mariadb',
+        status: isRunning ? 'running' : 'stopped',
+        is_available: isRunning,
+        description: isRunning ? '当前底层运行中的关系型数据库服务' : 'MariaDB 已安装但服务未启动'
+      })
+    } else {
+      try {
+        const vOut = spawnSync('mysql', ['--version'], { encoding: 'utf-8' }).stdout
+        const m = vOut.match(/Distrib\s*([0-9.]+)/)
+        engineVer = m ? m[1] : '8.0'
+      } catch {
+        engineVer = '8.0'
+      }
+      engines.push({
+        key: 'mysql',
+        name: `MySQL ${engineVer}`,
+        type: 'mysql',
+        service_name: 'mysql',
+        status: isRunning ? 'running' : 'stopped',
+        is_available: isRunning,
+        description: isRunning ? '当前底层运行中的关系型数据库服务' : 'MySQL 已安装但服务未启动'
+      })
+    }
+  }
+
+  // 2. Detect SQLite3
+  const hasSqlite = fs.existsSync('/usr/bin/sqlite3')
+  engines.push({
+    key: 'sqlite',
+    name: 'SQLite 3 (本地单文件轻量)',
+    type: 'sqlite',
+    service_name: null,
+    status: hasSqlite ? 'running' : 'unavailable',
+    is_available: true,
+    description: '单文件轻量嵌入式数据库（无需常驻后台服务）'
+  })
+
+  return engines
+}
+
 export async function handleDatabases(pathname, req, res, url, ctx) {
   if (!pathname.startsWith('/api/v1/databases')) return false
+
+  // 0. Available Engines Detection
+  if (pathname === '/api/v1/databases/engines' && req.method === 'GET') {
+    const engines = detectInstalledEngines()
+    res.json({ list: engines })
+    return true
+  }
 
   // 1. List / Create
   if (pathname === '/api/v1/databases') {
@@ -28,7 +117,17 @@ export async function handleDatabases(pathname, req, res, url, ctx) {
         return true
       }
       const dbType = (body.type || 'sqlite').toLowerCase()
+      if (dbType !== 'mysql' && dbType !== 'mariadb' && dbType !== 'sqlite') {
+        res.json(null, `不支持的数据库类型 [${dbType}]`, 400)
+        return true
+      }
       if (dbType === 'mysql' || dbType === 'mariadb') {
+        const engines = detectInstalledEngines()
+        const targetEng = engines.find(e => e.type === dbType || e.key === dbType)
+        if (!targetEng || !targetEng.is_available) {
+          res.json(null, `数据库服务 [${dbType}] 当前未运行或未安装，无法创建网络数据库，请先在应用商店中启动对应服务`, 400)
+          return true
+        }
         try {
           const charset = body.character_set || 'utf8mb4'
           const cli = getDbCli()

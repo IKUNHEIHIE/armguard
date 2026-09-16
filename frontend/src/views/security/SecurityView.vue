@@ -69,18 +69,50 @@
             <Globe class="w-3.5 h-3.5 text-cyan-400" />
             系统底层防火墙
           </span>
-          <span class="text-[10px] px-2 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 font-mono">
-            {{ firewallType }}
-          </span>
+          <div class="flex items-center gap-1.5">
+            <span
+              class="text-[10px] px-2 py-0.5 rounded-full font-mono border font-bold"
+              :class="ufwStatus.status === 'active' ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' : 'bg-slate-800 text-slate-400 border-slate-700'"
+            >
+              ● UFW {{ ufwStatus.status === 'active' ? '运行中' : '未开启' }}
+            </span>
+            <span class="text-[10px] px-2 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 font-mono">
+              {{ firewallType }}
+            </span>
+          </div>
         </div>
         <div class="flex items-baseline justify-between">
           <div class="text-2xl font-bold font-mono text-white">
             活动规则: <span class="text-cyan-300">{{ rules.length }}</span> 条
           </div>
           <span class="text-[11px] text-slate-400 font-mono">
-            默认入站: <strong class="text-slate-200 uppercase">{{ defaultPolicy }}</strong>
+            默认入站: <strong class="text-slate-200 uppercase">{{ ufwStatus.status === 'active' ? ufwStatus.default_incoming : defaultPolicy }}</strong>
           </span>
         </div>
+
+        <!-- UFW Protection Switch with Anti-Lockout -->
+        <div class="pt-2 border-t border-slate-800/80 flex items-center justify-between text-xs">
+          <div>
+            <div class="text-slate-300 font-semibold flex items-center gap-1.5">
+              <span>UFW 防火墙防护</span>
+              <span class="text-[10px] font-mono px-1.5 py-0.2 rounded bg-brand-500/20 text-brand-300 border border-brand-500/30 font-bold">防失联保护</span>
+            </div>
+            <div class="text-[10px] text-slate-400 mt-0.5 font-mono">
+              {{ ufwStatus.status === 'active' ? '已启用防护（自动放行 SSH 及已监听端口）' : '未启用（入站策略开放，点击开启防失联预检）' }}
+            </div>
+          </div>
+          <label class="relative inline-flex items-center cursor-pointer">
+            <input
+              type="checkbox"
+              :checked="ufwStatus.status === 'active'"
+              :disabled="togglingUfw"
+              @change="handleToggleUfw"
+              class="sr-only peer"
+            />
+            <div class="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-brand-600"></div>
+          </label>
+        </div>
+
         <!-- Ping Ban Switch -->
         <div class="pt-2 border-t border-slate-800/80 flex items-center justify-between text-xs">
           <div>
@@ -463,6 +495,95 @@
         </div>
       </form>
     </Modal>
+
+    <!-- 4. UFW Anti-Lockout Enable Confirmation Modal -->
+    <Modal v-model="showUfwEnableModal" title="⚠️ 开启 UFW 防火墙与防失联安全确认" size="lg">
+      <div class="space-y-4 font-mono text-xs">
+        <div class="p-4 bg-amber-500/10 border border-amber-500/30 rounded-xl space-y-2">
+          <div class="flex items-center gap-2 text-amber-300 font-bold text-xs">
+            <AlertTriangle class="w-4 h-4 text-amber-400 shrink-0" />
+            <span>高风险操作警示：默认策略变更与防失联预检保障</span>
+          </div>
+          <p class="text-[11px] text-slate-300 leading-relaxed font-sans">
+            启动 UFW 后，Linux 系统底层默认入站策略将转为 <strong class="text-rose-400 font-mono">DROP</strong>（拒绝未显式放行的入站包）。
+            为防止 <strong class="text-amber-300">SSH 远程终端失联（当前 GMSSH/代理会话）</strong> 及面板服务中断，系统已通过端口探针自动扫描出以下所有正在监听对外服务的端口，将在开启瞬间<strong>原子预注入白名单</strong>。
+          </p>
+        </div>
+
+        <div class="space-y-2">
+          <div class="flex items-center justify-between text-xs text-slate-300 font-semibold font-sans">
+            <span>待自动预先放行端口清单 (建议保持勾选)</span>
+            <span v-if="scanningPorts" class="text-brand-400 text-[11px] flex items-center gap-1">
+              <Loader2 class="w-3 h-3 animate-spin" />
+              正在探针扫描端口...
+            </span>
+            <span v-else class="text-[11px] text-slate-500 font-mono">已扫描 {{ scannedPorts.length }} 个对外服务端口</span>
+          </div>
+
+          <div class="max-h-56 overflow-y-auto space-y-2 p-2 bg-slate-950 rounded-xl border border-slate-800">
+            <div
+              v-for="item in scannedPorts"
+              :key="`${item.port}/${item.protocol}`"
+              class="flex items-center justify-between p-2.5 rounded-lg border text-xs"
+              :class="item.critical ? 'bg-brand-500/10 border-brand-500/30' : 'bg-slate-900 border-slate-800'"
+            >
+              <div class="flex items-center gap-2.5">
+                <input
+                  type="checkbox"
+                  v-model="item.selected"
+                  :disabled="item.critical"
+                  class="rounded border-slate-700 bg-slate-800 text-brand-600 focus:ring-0"
+                />
+                <div>
+                  <div class="font-mono font-bold flex items-center gap-1.5" :class="item.critical ? 'text-brand-300' : 'text-white'">
+                    <span>{{ item.port }}/{{ item.protocol.toUpperCase() }}</span>
+                    <span v-if="item.critical" class="px-1.5 py-0.2 rounded text-[9px] bg-rose-500/20 text-rose-300 border border-rose-500/30 font-sans">
+                      防失联核心 (强制放行)
+                    </span>
+                  </div>
+                  <div class="text-[10px] text-slate-400 font-sans mt-0.5">{{ item.name }}</div>
+                </div>
+              </div>
+              <span class="text-[10px] font-mono" :class="item.selected || item.critical ? 'text-emerald-400 font-bold' : 'text-slate-500'">
+                {{ item.selected || item.critical ? '✓ 预注入白名单' : '✕ 忽略' }}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div class="pt-2">
+          <label class="flex items-center gap-2 cursor-pointer text-xs text-slate-300 font-sans bg-slate-900/60 p-3 rounded-xl border border-slate-800">
+            <input
+              type="checkbox"
+              v-model="ufwRiskConfirmed"
+              class="rounded border-slate-700 bg-slate-800 text-brand-600 w-4 h-4"
+            />
+            <span class="leading-relaxed">
+              我已知晓 UFW 机制，并确认以上白名单端口已覆盖当前 SSH 远程连接与面板访问需求，同意开启。
+            </span>
+          </label>
+        </div>
+
+        <div class="flex justify-end gap-3 pt-2 border-t border-slate-800">
+          <button
+            type="button"
+            @click="showUfwEnableModal = false"
+            :disabled="enablingUfw"
+            class="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 text-xs font-semibold hover:bg-slate-700 transition"
+          >
+            取消
+          </button>
+          <button
+            @click="confirmEnableUfw"
+            :disabled="!ufwRiskConfirmed || enablingUfw"
+            class="px-5 py-2 rounded-xl bg-brand-600 hover:bg-brand-500 disabled:opacity-50 disabled:cursor-not-allowed text-slate-950 font-bold text-xs transition flex items-center gap-1.5 shadow"
+          >
+            <Loader2 v-if="enablingUfw" class="w-3.5 h-3.5 animate-spin" />
+            <span>{{ enablingUfw ? '正在执行防失联安全开启...' : '确认开启 UFW 防火墙' }}</span>
+          </button>
+        </div>
+      </div>
+    </Modal>
   </div>
 </template>
 
@@ -470,10 +591,10 @@
 import { ref, reactive, onMounted } from 'vue'
 import {
   Shield, Plus, Trash2, Edit2, Terminal, RefreshCw,
-  Globe, Radio, Sliders, Loader2, Ban
+  Globe, Radio, Sliders, Loader2, Ban, AlertTriangle
 } from 'lucide-vue-next'
 import Modal from '@/components/Modal.vue'
-import { FirewallRule, SSHConfig, securityApi } from '@/api/security'
+import { FirewallRule, SSHConfig, UfwStatus, ScannedPortItem, securityApi } from '@/api/security'
 import { toast } from '@/composables/useToast'
 
 const loading = ref(false)
@@ -488,6 +609,21 @@ const firewallType = ref('iptables/ip6tables 双栈')
 const defaultPolicy = ref('ACCEPT')
 const pingBanned = ref(false)
 const togglingPing = ref(false)
+
+const ufwStatus = ref<UfwStatus>({
+  installed: false,
+  status: 'inactive',
+  default_incoming: 'deny',
+  default_outgoing: 'allow',
+  ipv6_enabled: false
+})
+const loadingUfw = ref(false)
+const togglingUfw = ref(false)
+const showUfwEnableModal = ref(false)
+const scanningPorts = ref(false)
+const scannedPorts = ref<ScannedPortItem[]>([])
+const ufwRiskConfirmed = ref(false)
+const enablingUfw = ref(false)
 
 const rules = ref<FirewallRule[]>([])
 const bannedIps = ref<{ ip: string; jail: string; banned_at: string; failures: number }[]>([])
@@ -531,13 +667,84 @@ function getProtoBadgeClass(proto: string) {
   return 'bg-slate-800 text-slate-300 border-slate-700'
 }
 
+async function loadUfwStatus() {
+  loadingUfw.value = true
+  try {
+    const res = await securityApi.getUfwStatus()
+    if (res.data?.data) {
+      ufwStatus.value = res.data.data
+    }
+  } catch (e: any) {
+    console.error('Failed to load UFW status:', e)
+  } finally {
+    loadingUfw.value = false
+  }
+}
+
+async function handleToggleUfw() {
+  if (ufwStatus.value.status === 'active') {
+    if (confirm('确定要停用 UFW 防火墙吗？\n停用后系统底层网络将转为开放直通模式。')) {
+      togglingUfw.value = true
+      try {
+        const res = await securityApi.disableUfw()
+        toast.success(res.data.message || 'UFW 防火墙已成功停用')
+        await loadAllSecurityData()
+      } catch (e: any) {
+        toast.error(`停用失败: ${e.message}`)
+      } finally {
+        togglingUfw.value = false
+      }
+    }
+  } else {
+    openUfwEnableModal()
+  }
+}
+
+async function openUfwEnableModal() {
+  showUfwEnableModal.value = true
+  ufwRiskConfirmed.value = false
+  scanningPorts.value = true
+  try {
+    const res = await securityApi.scanListeningPorts()
+    if (res.data?.data?.ports) {
+      scannedPorts.value = res.data.data.ports
+    }
+  } catch (e: any) {
+    toast.error(`扫描在听服务端口失败: ${e.message}`)
+  } finally {
+    scanningPorts.value = false
+  }
+}
+
+async function confirmEnableUfw() {
+  if (!ufwRiskConfirmed.value) {
+    toast.error('请先勾选已知晓 UFW 策略机制并确认白名单端口')
+    return
+  }
+  enablingUfw.value = true
+  try {
+    const portsToAllow = scannedPorts.value
+      .filter(p => p.selected || p.critical)
+      .map(p => `${p.port}/${p.protocol}`)
+    const res = await securityApi.enableUfw(portsToAllow)
+    toast.success(res.data.message || 'UFW 防火墙已成功开启！')
+    showUfwEnableModal.value = false
+    await loadAllSecurityData()
+  } catch (e: any) {
+    toast.error(`开启防火墙失败: ${e.message}`)
+  } finally {
+    enablingUfw.value = false
+  }
+}
+
 async function loadAllSecurityData() {
   loading.value = true
   try {
-    const [rulesRes, sshRes, fRes] = await Promise.all([
+    const [rulesRes, sshRes, fRes, ufwRes] = await Promise.all([
       securityApi.getFirewallRules().catch(() => null),
       securityApi.getSSHConfig().catch(() => null),
-      securityApi.getFail2banStatus().catch(() => null)
+      securityApi.getFail2banStatus().catch(() => null),
+      securityApi.getUfwStatus().catch(() => null)
     ])
 
     if (rulesRes?.data?.data) {
@@ -554,6 +761,10 @@ async function loadAllSecurityData() {
     if (fRes?.data?.data) {
       bannedIps.value = fRes.data.data.banned_ips || []
       fail2banRunning.value = fRes.data.data.running
+    }
+
+    if (ufwRes?.data?.data) {
+      ufwStatus.value = ufwRes.data.data
     }
   } finally {
     loading.value = false

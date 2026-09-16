@@ -30,6 +30,29 @@ export interface Fail2banStatus {
   }[]
 }
 
+export interface UfwStatus {
+  installed: boolean
+  status: 'active' | 'inactive'
+  default_incoming: string
+  default_outgoing: string
+  ipv6_enabled: boolean
+  raw_output?: string
+}
+
+export interface ScannedPortItem {
+  port: number
+  protocol: string
+  name: string
+  critical: boolean
+  selected: boolean
+}
+
+export interface ScanPortsResponse {
+  ssh_port: number
+  panel_port: number
+  ports: ScannedPortItem[]
+}
+
 export const securityApi = {
   getFirewallRules: () => apiClient.get<ApiResponse<{ rules: FirewallRule[]; firewall_type: string; status: 'active' | 'inactive'; default_policy?: string; ping_banned?: boolean }>>('/firewall/rules'),
   addFirewallRule: (rule: { type?: 'port' | 'ip_block'; protocol?: string; port?: string; source_ip?: string; action?: string; description?: string }) => apiClient.post<ApiResponse<void>>('/firewall/rules', rule),
@@ -42,4 +65,8 @@ export const securityApi = {
   getFail2banStatus: () => apiClient.get<ApiResponse<Fail2banStatus>>('/firewall/fail2ban/status'),
   banIP: (ip: string, jail = 'sshd') => apiClient.post<ApiResponse<void>>('/firewall/fail2ban/ban', { ip, jail }),
   unbanIP: (ip: string, jail = 'sshd') => apiClient.post<ApiResponse<void>>('/firewall/fail2ban/unban', { ip, jail }),
+  getUfwStatus: () => apiClient.get<ApiResponse<UfwStatus>>('/firewall/ufw/status'),
+  scanListeningPorts: () => apiClient.get<ApiResponse<ScanPortsResponse>>('/firewall/scan-ports'),
+  enableUfw: (ports: string[]) => apiClient.post<ApiResponse<{ status: string; allowed_ports: string[] }>>('/firewall/ufw/enable', { ports }),
+  disableUfw: () => apiClient.post<ApiResponse<{ status: string }>>('/firewall/ufw/disable'),
 }

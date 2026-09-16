@@ -4,10 +4,10 @@
     <div class="flex items-center justify-between">
       <div>
         <h2 class="text-lg font-bold text-white tracking-tight">数据库管理</h2>
-        <p class="text-xs text-slate-400 font-mono">管理 MySQL / MariaDB / PostgreSQL / SQLite / Redis，支持一键备份与在线 SQL 执行</p>
+        <p class="text-xs text-slate-400 font-mono">管理 MySQL / MariaDB 与本地 SQLite 数据库，支持一键热备份与在线 SQL 执行</p>
       </div>
       <button
-        @click="showCreateModal = true"
+        @click="openCreateModal"
         class="flex items-center gap-2 px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-500 text-slate-950 font-bold text-xs transition shadow-lg shadow-brand-500/20"
       >
         <Plus class="w-4 h-4" />
@@ -105,17 +105,33 @@
     <Modal v-model="showCreateModal" title="新建数据库实例" size="md">
       <form @submit.prevent="handleCreateDatabase" class="space-y-4 font-mono text-xs">
         <div>
-          <label class="block text-slate-300 font-semibold mb-1">数据库类型</label>
+          <div class="flex items-center justify-between mb-1">
+            <label class="block text-slate-300 font-semibold">数据库类型</label>
+            <span v-if="loadingEngines" class="text-[10px] text-brand-400 animate-pulse">正在检测可用引擎...</span>
+          </div>
           <select
             v-model="createForm.type"
             class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2 text-white focus:outline-none focus:border-brand-500"
           >
-            <option value="mysql">MySQL 8.0 / 8.4</option>
-            <option value="mariadb">MariaDB (ARM 推荐低开销)</option>
-            <option value="sqlite">SQLite 3 (单文件轻量)</option>
-            <option value="postgresql">PostgreSQL 16</option>
-            <option value="redis">Redis 7 (内存数据库)</option>
+            <option
+              v-for="eng in availableEngines"
+              :key="eng.key"
+              :value="eng.key"
+              :disabled="!eng.is_available"
+            >
+              {{ eng.name }} {{ eng.status === 'running' ? '(运行中)' : eng.status === 'stopped' ? '(服务已停止)' : '' }}
+            </option>
           </select>
+        </div>
+
+        <!-- Guidance if no relational DB running -->
+        <div v-if="!loadingEngines && !hasRunningRelationalDb" class="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-start gap-2">
+          <span class="text-sm shrink-0">⚠️</span>
+          <div class="leading-relaxed">
+            当前系统未运行 MySQL 或 MariaDB 数据库服务，仅支持创建本地 SQLite 单文件数据库。如需网络数据库，请先前往
+            <router-link to="/appstore" class="text-brand-400 font-bold underline hover:text-brand-300">应用商店</router-link>
+            启动或安装数据库。
+          </div>
         </div>
 
         <div>
@@ -277,10 +293,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { Plus, Database, Archive, Terminal, Download, Trash2, Play } from 'lucide-vue-next'
 import Modal from '@/components/Modal.vue'
-import { DatabaseItem, BackupRecord, databaseApi } from '@/api/database'
+import { DatabaseItem, BackupRecord, DatabaseEngineItem, databaseApi } from '@/api/database'
 import { toast } from '@/composables/useToast'
 
 const showCreateModal = ref(false)
@@ -296,6 +312,12 @@ const queryExecutionTime = ref<number | null>(null)
 const queryResults = ref<{ columns: string[]; rows: any[][] } | null>(null)
 
 const databases = ref<DatabaseItem[]>([])
+const availableEngines = ref<DatabaseEngineItem[]>([])
+const loadingEngines = ref(false)
+
+const hasRunningRelationalDb = computed(() => {
+  return availableEngines.value.some(e => (e.type === 'mariadb' || e.type === 'mysql') && e.is_available)
+})
 
 const createForm = reactive<{
   type: 'mysql' | 'mariadb' | 'postgresql' | 'sqlite' | 'redis'
@@ -303,11 +325,36 @@ const createForm = reactive<{
   username: string
   password: string
 }>({
-  type: 'mysql',
+  type: 'mariadb',
   db_name: '',
   username: '',
   password: ''
 })
+
+async function loadAvailableEngines() {
+  loadingEngines.value = true
+  try {
+    const res = await databaseApi.getAvailableEngines()
+    if (res.data?.data?.list) {
+      availableEngines.value = res.data.data.list
+      const runningRelational = availableEngines.value.find(e => (e.type === 'mariadb' || e.type === 'mysql') && e.is_available)
+      if (runningRelational) {
+        createForm.type = runningRelational.key as any
+      } else {
+        createForm.type = 'sqlite'
+      }
+    }
+  } catch (e: any) {
+    console.error('Failed to load engines:', e)
+  } finally {
+    loadingEngines.value = false
+  }
+}
+
+function openCreateModal() {
+  loadAvailableEngines()
+  showCreateModal.value = true
+}
 
 function getTypeBadge(type: string) {
   switch (type) {
@@ -463,5 +510,6 @@ async function deleteDatabase(db: DatabaseItem) {
 
 onMounted(() => {
   loadDatabases()
+  loadAvailableEngines()
 })
 </script>
