@@ -22,17 +22,36 @@ export async function handleSecurity(pathname, req, res, url, ctx) {
   if (pathname === '/api/v1/firewall/rules') {
     if (req.method === 'GET') {
       try {
-        const sOut = execSync('iptables -S INPUT 2>/dev/null || true').toString()
-        const lines = sOut.split('\n').filter(Boolean)
+        const rawLines = []
         let defaultPolicy = 'ACCEPT'
-        const rules = []
 
-        lines.forEach((line, idx) => {
+        try {
+          const sOut = execSync('iptables -S INPUT 2>/dev/null || true').toString()
+          rawLines.push(...sOut.split('\n').filter(Boolean).map(l => ({ line: l, chain: 'INPUT' })))
+        } catch {}
+
+        try {
+          const uOut = execSync('iptables -S ufw-user-input 2>/dev/null || true').toString()
+          rawLines.push(...uOut.split('\n').filter(Boolean).map(l => ({ line: l, chain: 'ufw-user-input' })))
+        } catch {}
+
+        const rules = []
+        const seen = new Set()
+
+        rawLines.forEach(({ line, chain }) => {
           if (line.startsWith('-P INPUT')) {
             defaultPolicy = line.split(/\s+/)[2] || 'ACCEPT'
             return
           }
-          if (!line.startsWith('-A INPUT')) return
+          if (!line.startsWith('-A ')) return
+
+          // Action Target Verification: Skip subsystem jumps (ufw-*, f2b-*, DOCKER*, etc.)!
+          const actMatch = line.match(/-j\s+([a-zA-Z0-9_-]+)/)
+          if (!actMatch) return
+          const actionUpper = actMatch[1].toUpperCase()
+          if (!['ACCEPT', 'DROP', 'REJECT'].includes(actionUpper)) {
+            return
+          }
 
           // Protocol
           let proto = 'ALL'
@@ -54,13 +73,8 @@ export async function handleSecurity(pathname, req, res, url, ctx) {
           const srcMatch = line.match(/-s\s+([^\s]+)/)
           if (srcMatch) sourceIp = srcMatch[1]
 
-          // Action
-          let action = 'accept'
-          const actMatch = line.match(/-j\s+([a-zA-Z]+)/)
-          if (actMatch) action = actMatch[1].toLowerCase()
-
           // Comment / Description
-          let description = '系统防火墙策略'
+          let description = '系统防火墙规则'
           const commentMatch = line.match(/--comment\s+"([^"]+)"/) || line.match(/--comment\s+([^\s]+)/)
           if (commentMatch) {
             description = commentMatch[1]
@@ -70,17 +84,24 @@ export async function handleSecurity(pathname, req, res, url, ctx) {
             description = 'SSH 远程登录'
           } else if (port === '80' || port === '443') {
             description = 'Web 基础通信'
+          } else if (port === '2096' || port === '61000' || port === '48269') {
+            description = 'X-UI / 代理服务端口'
           }
 
-          const rawSpec = line.replace(/^-A INPUT\s+/, '')
+          const key = `${proto}|${port}|${sourceIp}|${actionUpper}`
+          if (seen.has(key)) return
+          seen.add(key)
+
+          const rawSpec = line.replace(/^-A\s+[^\s]+\s+/, '')
 
           rules.push({
-            id: idx + 1,
+            id: rules.length + 1,
             protocol: proto,
             port: port,
             source_ip: sourceIp,
-            action: action,
+            action: actionUpper.toLowerCase(),
             description: description,
+            chain: chain,
             raw_spec: rawSpec,
             created_at: '生效中'
           })
@@ -264,15 +285,20 @@ export async function handleSecurity(pathname, req, res, url, ctx) {
     const id = delRuleMatch[1]
     const body = await ctx.parseBody(req, res).catch(() => ({}))
     try {
+      const chain = (body.chain === 'ufw-user-input') ? 'ufw-user-input' : 'INPUT'
       if (body && body.raw_spec) {
         const safeTokens = String(body.raw_spec).trim().split(/\s+/).filter(t => /^[a-zA-Z0-9_.:\/-]+$/.test(t))
         if (safeTokens.length > 0) {
-          spawnSync('iptables', ['-D', 'INPUT', ...safeTokens])
-          spawnSync('ip6tables', ['-D', 'INPUT', ...safeTokens])
+          spawnSync('iptables', ['-D', chain, ...safeTokens])
+          spawnSync('ip6tables', ['-D', chain, ...safeTokens])
+          if (chain !== 'INPUT') {
+            spawnSync('iptables', ['-D', 'INPUT', ...safeTokens])
+            spawnSync('ip6tables', ['-D', 'INPUT', ...safeTokens])
+          }
         }
       } else if (/^\d+$/.test(id)) {
-        spawnSync('iptables', ['-D', 'INPUT', id])
-        spawnSync('ip6tables', ['-D', 'INPUT', id])
+        spawnSync('iptables', ['-D', chain, id])
+        spawnSync('ip6tables', ['-D', chain, id])
       }
       ctx.logOperation('admin', '删除防火墙规则', `Rule #${id}`)
       res.json(null, '防火墙规则已成功删除')

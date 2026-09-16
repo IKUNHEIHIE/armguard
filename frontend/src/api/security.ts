@@ -8,6 +8,7 @@ export interface FirewallRule {
   action: 'accept' | 'drop' | 'reject'
   description?: string
   raw_spec?: string
+  chain?: string
   created_at: string
 }
 
@@ -57,7 +58,7 @@ export const securityApi = {
   getFirewallRules: () => apiClient.get<ApiResponse<{ rules: FirewallRule[]; firewall_type: string; status: 'active' | 'inactive'; default_policy?: string; ping_banned?: boolean }>>('/firewall/rules'),
   addFirewallRule: (rule: { type?: 'port' | 'ip_block'; protocol?: string; port?: string; source_ip?: string; action?: string; description?: string }) => apiClient.post<ApiResponse<void>>('/firewall/rules', rule),
   updateFirewallRule: (data: { old_raw_spec?: string; type?: 'port' | 'ip_block'; protocol?: string; port?: string; source_ip?: string; action?: string; description?: string }) => apiClient.put<ApiResponse<void>>('/firewall/rules', data),
-  deleteFirewallRule: (id: number, rawSpec?: string) => apiClient.delete<ApiResponse<void>>(`/firewall/rules/${id}`, { data: { raw_spec: rawSpec } }),
+  deleteFirewallRule: (id: number, rawSpec?: string, chain?: string) => apiClient.delete<ApiResponse<void>>(`/firewall/rules/${id}`, { data: { raw_spec: rawSpec, chain } }),
   getSSHConfig: () => apiClient.get<ApiResponse<SSHConfig>>('/firewall/ssh'),
   updateSSHConfig: (config: Partial<SSHConfig>) => apiClient.put<ApiResponse<void>>('/firewall/ssh', config),
   getIcmpStatus: () => apiClient.get<ApiResponse<{ ping_banned: boolean }>>('/firewall/icmp'),

@@ -873,7 +873,7 @@ async function handleSaveRule() {
 async function handleDeleteRule(rule: FirewallRule) {
   if (confirm(`确定要从 Linux 内核中删除此防火墙规则吗？\n[${rule.protocol}] ${rule.port} (${rule.description})`)) {
     try {
-      const res = await securityApi.deleteFirewallRule(rule.id, rule.raw_spec)
+      const res = await securityApi.deleteFirewallRule(rule.id, rule.raw_spec, rule.chain)
       toast.success(res.data.message || '防火墙规则已成功删除！')
       await loadAllSecurityData()
     } catch (e: any) {
