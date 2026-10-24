@@ -49,7 +49,7 @@ import { siteApi, SiteItem } from '@/api/site'
               <tr *ngFor="let cert of certs()">
                 <td>
                   <strong>{{ cert.domain }}</strong>
-                  <div *ngIf="cert.sans?.length" style="font-size: 0.7rem; color: var(--ag-on-surface-variant)">
+                  <div *ngIf="cert.sans.length" style="font-size: 0.7rem; color: var(--ag-on-surface-variant)">
                     SANs: {{ cert.sans.join(', ') }}
                   </div>
                 </td>
@@ -64,10 +64,10 @@ import { siteApi, SiteItem } from '@/api/site'
                   </span>
                 </td>
                 <td>
-                  <span *ngIf="cert.deployed_sites?.length" class="m3-badge primary">
+                  <span *ngIf="cert.deployed_sites.length" class="m3-badge primary">
                     {{ cert.deployed_sites.join(', ') }}
                   </span>
-                  <span *ngIf="!cert.deployed_sites?.length" class="m3-badge neutral">未部署</span>
+                  <span *ngIf="!cert.deployed_sites.length" class="m3-badge neutral">未部署</span>
                 </td>
                 <td>
                   <button mat-button color="primary" (click)="openDetail(cert)">详情</button>

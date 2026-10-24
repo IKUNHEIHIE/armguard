@@ -32,44 +32,86 @@ ${listenDirectives}
 `
 }
 
-export function syncNginxStreamEnvironment(ctx) {
+export function getNginxStreamEnvStatus(ctx = {}) {
   const confDir = ctx.STREAM_CONF_DIR || '/etc/nginx/stream.d'
+  const mainConf = ctx.NGINX_MAIN_CONF || '/etc/nginx/nginx.conf'
+  const dirExists = fs.existsSync(confDir)
+  let streamConfigured = false
+  if (fs.existsSync(mainConf)) {
+    try {
+      const content = fs.readFileSync(mainConf, 'utf8')
+      streamConfigured =
+        content.includes('include /etc/nginx/stream.d/*.conf;') ||
+        content.includes(`include ${confDir}/*.conf;`) ||
+        /\bstream\s*\{/.test(content)
+    } catch {}
+  }
+  return {
+    conf_dir: confDir,
+    main_conf: mainConf,
+    dir_exists: dirExists,
+    stream_configured: streamConfigured
+  }
+}
+
+export function syncNginxStreamEnvironment(ctx = {}) {
+  const confDir = ctx.STREAM_CONF_DIR || '/etc/nginx/stream.d'
+  const mainConf = ctx.NGINX_MAIN_CONF || '/etc/nginx/nginx.conf'
   try {
     if (!fs.existsSync(confDir)) {
       fs.mkdirSync(confDir, { recursive: true })
     }
-  } catch {}
+  } catch (e) {
+    return { ok: false, error: `无法创建 stream.d 目录: ${e.message}` }
+  }
 
-  // Ensure /etc/nginx/nginx.conf has stream include block on Linux
-  const mainConf = '/etc/nginx/nginx.conf'
+  // Only modify nginx.conf when explicitly syncing on mutating operations, with backup + nginx -t rollback (REV-016)
   if (fs.existsSync(mainConf)) {
     try {
-      const content = fs.readFileSync(mainConf, 'utf8')
-      if (!content.includes('include /etc/nginx/stream.d/*.conf;')) {
-        const streamBlock = `\n# ArmGuard Layer 4 Stream Proxy\nstream {\n    include /etc/nginx/stream.d/*.conf;\n}\n`
-        fs.appendFileSync(mainConf, streamBlock, 'utf8')
+      const originalContent = fs.readFileSync(mainConf, 'utf8')
+      const includeLine = `include ${confDir.replace(/\\/g, '/')}/*.conf;`
+      if (
+        !originalContent.includes('include /etc/nginx/stream.d/*.conf;') &&
+        !originalContent.includes(includeLine)
+      ) {
+        const streamBlock = `\n# ArmGuard Layer 4 Stream Proxy\nstream {\n    ${includeLine}\n}\n`
+        fs.writeFileSync(mainConf, originalContent + streamBlock, 'utf8')
+        const testRes = spawnSync('nginx', ['-t'], { encoding: 'utf-8', timeout: 15000 })
+        if (testRes.error || testRes.status !== 0) {
+          fs.writeFileSync(mainConf, originalContent, 'utf8')
+          const detail = (testRes.stderr || testRes.stdout || testRes.error?.message || `退出码 ${testRes.status}`).trim()
+          return { ok: false, error: `初始化 Nginx stream 模块失败并已回滚: ${detail}` }
+        }
       }
     } catch (e) {
-      console.error('[ArmGuard] Failed to ensure stream block in nginx.conf:', e.message)
+      return { ok: false, error: `无法更新 ${mainConf}: ${e.message}` }
     }
   }
+  return { ok: true }
 }
 
 export async function handleStream(pathname, req, res, url, ctx) {
   if (!pathname.startsWith('/api/v1/stream')) return false
 
-  syncNginxStreamEnvironment(ctx)
   const confDir = ctx.STREAM_CONF_DIR || '/etc/nginx/stream.d'
   const rules = ctx.streamRules || []
 
-  // 1. List Rules
+  // 1. List Rules (Read-Only — REV-016: never modify nginx.conf on GET)
   if (pathname === '/api/v1/stream/list' || (pathname === '/api/v1/stream' && req.method === 'GET')) {
     res.json({
       list: rules,
       total: rules.length,
       page: 1,
-      page_size: 100
+      page_size: 100,
+      environment: getNginxStreamEnvStatus(ctx)
     })
+    return true
+  }
+
+  // Mutating operations ensure stream environment is initialized safely
+  const envSync = syncNginxStreamEnvironment(ctx)
+  if (!envSync.ok) {
+    res.json(null, envSync.error, 500)
     return true
   }
 

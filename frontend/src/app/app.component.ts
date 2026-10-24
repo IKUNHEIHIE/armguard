@@ -78,6 +78,7 @@ interface NavGroup {
                 <div class="host-name">{{ system.info()?.hostname || 'armguard-node' }}</div>
                 <div class="host-arch">
                   {{ system.info()?.arch || 'aarch64' }} · {{ system.info()?.panel_version || 'v0.2.0' }}
+                  <span *ngIf="system.info()?.build_commit">({{ system.info()!.build_commit }})</span>
                 </div>
               </div>
             </div>
@@ -92,6 +93,7 @@ interface NavGroup {
               <button
                 *ngIf="isMobile()"
                 mat-icon-button
+                aria-label="打开或关闭侧边导航菜单"
                 (click)="mobileDrawerOpen.set(!mobileDrawerOpen())"
               >
                 <mat-icon>menu</mat-icon>
@@ -108,6 +110,7 @@ interface NavGroup {
               <!-- M3 Dark / Light Theme Switcher -->
               <button
                 mat-icon-button
+                aria-label="切换 Material 3 深色或浅色主题"
                 (click)="theme.toggleTheme()"
                 [matTooltip]="theme.mode() === 'dark' ? '切换至 Material 3 浅色模式' : '切换至 Material 3 深色模式'"
               >

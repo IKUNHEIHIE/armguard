@@ -21,6 +21,7 @@ export interface PanelSettings {
   eco_mode_enabled: boolean
   eco_mode_threshold_mb?: number
   current_version: string
+  build_commit?: string
   latest_version: string
   has_update: boolean
   timezone: string
@@ -30,15 +31,21 @@ export interface PanelSettings {
   webhook_type: 'feishu' | 'dingtalk' | 'wecom' | 'telegram' | 'custom'
   webhook_url: string
   alert_events: string[]
+  alert_auto_push_supported?: boolean
   runtime?: {
     effective_port: number
     saved_port: number
-    port_overridden_by_env: boolean
+    port_source?: string
+    port_error?: string | null
+    port_overridden_by_env?: boolean
     restart_required: boolean
     effective_protocol: 'http' | 'https'
-    saved_ssl_enabled: boolean
-    tls_ready: boolean
-    tls_error: string | null
+    saved_ssl_enabled?: boolean
+    tls_ready?: boolean
+    tls_error?: string | null
+    ssl_error?: string | null
+    version?: string
+    build_commit?: string
   }
   monitor?: MonitorPolicy & {
     sample_interval_ms?: number
@@ -62,7 +69,12 @@ export const settingsApi = {
   // Panel Backup & Restore
   createPanelBackup: () => apiClient.post<ApiResponse<PanelBackupItem>>('/settings/backup/create'),
   getPanelBackups: () => apiClient.get<ApiResponse<{ list: PanelBackupItem[] }>>('/settings/backup/list'),
-  deletePanelBackup: (file_name: string) => apiClient.delete<ApiResponse<void>>(`/settings/backup/${encodeURIComponent(file_name)}`),
+  deletePanelBackup: (file_name: string) =>
+    apiClient.delete<ApiResponse<void>>('/settings/backup', { params: { file_name } }),
+  generateSelfSignedCert: () =>
+    apiClient.post<ApiResponse<{ cert_path: string; key_path: string; runtime: any }>>(
+      '/settings/panel/generate-self-signed'
+    ),
   
   // Engine Lifecycle & Cache
   clearPanelCache: () => apiClient.post<ApiResponse<void>>('/settings/panel/clear-cache'),

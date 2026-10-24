@@ -684,6 +684,7 @@ export async function handleSystem(pathname, req, res, url, ctx) {
       is_arm: os.arch().startsWith('arm'),
       arm_board_model: id.board_model,
       panel_version: ctx.PANEL_VERSION,
+      build_commit: ctx.BUILD_COMMIT || ctx.runtime?.build_commit || '044b850',
       memory_total_bytes: t.memory.total,
       disk_total_bytes: t.disk.total
     })
@@ -705,21 +706,40 @@ export async function handleSystem(pathname, req, res, url, ctx) {
     return true
   }
 
-  // Kill Process
+  // Kill Process (REV-008: default SIGTERM, optional explicit SIGKILL, protect panel/init PIDs)
   const killMatch = pathname.match(/^\/api\/v1\/system\/processes\/(\d+)\/kill$/)
   if (killMatch && req.method === 'POST') {
     const pid = parseInt(killMatch[1], 10)
     if (isNaN(pid) || pid <= 1) {
-      res.json(null, '无效的进程 PID', 400)
+      res.json(null, '无效的进程 PID（禁止向 PID 1 发送终止信号）', 400)
       return true
     }
+    if (pid === process.pid || (process.ppid && pid === process.ppid)) {
+      res.json(null, `安全保护：禁止终止 ArmGuard 面板自身进程 (PID ${pid})`, 403)
+      return true
+    }
+    let body = {}
+    if (typeof ctx?.parseBody === 'function') {
+      try { body = (await ctx.parseBody(req, res)) || {} } catch {}
+    }
+    const forceKill =
+      body.force === true ||
+      String(body.signal || '').toUpperCase() === 'SIGKILL' ||
+      String(body.signal || '') === '9' ||
+      url.searchParams.get('force') === 'true'
+    const sigFlag = forceKill ? '-KILL' : '-TERM'
+    const sigLabel = forceKill ? 'SIGKILL' : 'SIGTERM'
     try {
-      const child = spawnSync('kill', ['-9', String(pid)], { timeout: 5000 })
-      if (child.status === 0) {
-        ctx.logOperation(ctx.currentUser(), '结束进程', `PID: ${pid}`)
-        res.json(null, '进程已成功结束')
+      const child = spawnSync('kill', [sigFlag, String(pid)], { encoding: 'utf-8', timeout: 5000 })
+      if (!child.error && child.status === 0) {
+        ctx.logOperation(ctx.currentUser(), `结束进程 (${sigLabel})`, `PID: ${pid}`)
+        res.json({ pid, signal: sigLabel }, `已向进程 (PID: ${pid}) 发送 ${sigLabel} 信号`)
       } else {
-        res.json(null, `结束进程失败: ${(child.stderr || '').toString().trim() || child.error?.message || `exit ${child.status}`}`, 500)
+        res.json(
+          null,
+          `结束进程失败 (${sigLabel}): ${(child.stderr || '').toString().trim() || child.error?.message || `exit ${child.status}`}`,
+          500
+        )
       }
     } catch (e) {
       res.json(null, e.message, 500)

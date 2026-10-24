@@ -99,12 +99,15 @@ function buildRuntimeStatus(ctx) {
   const protocolPending = (wantsHttps && rt.protocol !== 'https' && !rt.ssl_error) || (!wantsHttps && rt.protocol === 'https')
   return {
     effective_port: rt.port,
+    saved_port: savedPort || rt.port,
     port_source: rt.port_source,
     port_error: rt.port_error || null,
     effective_protocol: rt.protocol,
     ssl_error: rt.ssl_error,
     restart_required: portPending || protocolPending,
-    started_at: rt.started_at
+    started_at: rt.started_at,
+    version: ctx.PANEL_VERSION,
+    build_commit: ctx.BUILD_COMMIT || rt.build_commit || 'unknown'
   }
 }
 
@@ -204,6 +207,7 @@ export async function handleSettings(pathname, req, res, url, ctx) {
         alert_events: ['high_load', 'disk_low', 'login_fail'],
         ...ctx.settings,
         current_version: ctx.PANEL_VERSION,
+        build_commit: ctx.BUILD_COMMIT || ctx.runtime?.build_commit || 'unknown',
         // Automatic alert pushing is not implemented yet; only the connectivity test is.
         alert_auto_push_supported: false,
         monitor: ctx.getMonitorPolicy(),
@@ -471,6 +475,45 @@ export async function handleSettings(pathname, req, res, url, ctx) {
     ctx.logOperation(ctx.currentUser(), '删除面板数据备份', fileName)
     res.json(null, '备份包已成功删除')
     return true
+  }
+
+  if (pathname === '/api/v1/settings/panel/generate-self-signed' && req.method === 'POST') {
+    try {
+      const panelSslDir = path.join(ctx.DATA_DIR, 'panel_ssl')
+      fs.mkdirSync(panelSslDir, { recursive: true, mode: 0o700 })
+      const certPath = path.join(panelSslDir, 'fullchain.pem')
+      const keyPath = path.join(panelSslDir, 'privkey.pem')
+      const host = (ctx.settings.hostname || 'armguard.local').replace(/[^a-zA-Z0-9.-]/g, '') || 'armguard.local'
+      const ossl = spawnSync(
+        'openssl',
+        [
+          'req', '-x509', '-nodes', '-newkey', 'rsa:2048', '-days', '3650',
+          '-keyout', keyPath,
+          '-out', certPath,
+          '-subj', `/CN=${host}/O=ArmGuard Panel`
+        ],
+        { encoding: 'utf-8', timeout: 15000 }
+      )
+      if (ossl.error || ossl.status !== 0 || !fs.existsSync(certPath) || !fs.existsSync(keyPath)) {
+        const detail = ossl.error ? ossl.error.message : ((ossl.stderr || '').trim() || `退出码 ${ossl.status}`)
+        res.json(null, `生成自签名证书失败: ${detail}`, 500)
+        return true
+      }
+      try { fs.chmodSync(keyPath, 0o600) } catch {}
+      ctx.settings.panel_ssl_cert = certPath
+      ctx.settings.panel_ssl_key = keyPath
+      ctx.settings.ssl_enabled = true
+      ctx.saveJSON(ctx.SETTINGS_FILE, ctx.settings)
+      ctx.logOperation(ctx.currentUser(), '生成面板自签名 HTTPS 证书', certPath)
+      res.json(
+        { cert_path: certPath, key_path: keyPath, runtime: buildRuntimeStatus(ctx) },
+        '已生成面板自签名 HTTPS 证书并写入配置，重启面板服务后即可通过 HTTPS 访问'
+      )
+      return true
+    } catch (e) {
+      res.json(null, `生成自签名证书失败: ${e.message}`, 500)
+      return true
+    }
   }
 
   if (pathname === '/api/v1/settings/panel/clear-cache' && req.method === 'POST') {

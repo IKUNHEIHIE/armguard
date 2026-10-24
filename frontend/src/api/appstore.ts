@@ -8,6 +8,9 @@ export interface AppMarketItem {
   icon: string
   versions: string[]
   current_version?: string
+  install_source?: string
+  protected_runtime?: boolean
+  protected_reason?: string
   status: 'not_installed' | 'installing' | 'installed' | 'error'
   service_status?: 'running' | 'stopped'
   arch_support: ('arm64' | 'armv7' | 'x86_64')[]
@@ -19,7 +22,7 @@ export interface AppMarketItem {
 export interface AppTaskProgress {
   task_id: string
   app_key: string
-  stage: 'downloading' | 'compiling' | 'installing' | 'configuring' | 'done' | 'failed'
+  stage: 'downloading' | 'compiling' | 'installing' | 'configuring' | 'done' | 'failed' | 'unknown'
   progress_percent: number
   log_tail: string
   logs?: string[]

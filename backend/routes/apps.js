@@ -78,13 +78,15 @@ export const marketApps = [
     key: 'nodejs',
     name: 'Node.js 运行时',
     category: 'runtime',
-    description: 'JavaScript 运行时环境，支持 npm / pnpm / yarn',
+    description: 'JavaScript 运行时环境，支持 npm / pnpm / yarn（当前 ArmGuard 面板核心依赖运行时）',
     icon: '🟢',
     pkg: 'nodejs',
     bin: 'node',
-    versions: ['v22.x (LTS)', 'v20.x (LTS)', 'v18.x'],
+    versions: ['APT 官方软件源默认版本 (LTS)'],
     arch_support: ['arm64', 'armv7', 'x86_64'],
-    has_prebuilt: true
+    has_prebuilt: true,
+    protected_runtime: true,
+    protected_reason: 'Node.js 为当前 ArmGuard 面板自身核心运行时依赖，禁止通过商店卸载'
   },
   {
     key: 'fail2ban',
@@ -156,6 +158,58 @@ export function invalidateMarketAppsCache() {
   cachedMarketAppsTime = 0
 }
 
+function detectBinaryVersion(appKey, fallbackVer) {
+  try {
+    if (appKey === 'nginx') {
+      const r = spawnSync('nginx', ['-v'], { encoding: 'utf-8', timeout: 3000 })
+      const out = `${r.stderr || ''}\n${r.stdout || ''}`
+      const m = out.match(/nginx\/([0-9.]+[a-zA-Z0-9._-]*)/i)
+      if (m) return m[1]
+    } else if (appKey === 'nodejs') {
+      const r = spawnSync('node', ['-v'], { encoding: 'utf-8', timeout: 3000 })
+      const out = (r.stdout || '').trim()
+      if (out.startsWith('v')) return out
+      if (process.version) return process.version
+    } else if (appKey === 'redis') {
+      const r = spawnSync('redis-server', ['--version'], { encoding: 'utf-8', timeout: 3000 })
+      const out = `${r.stdout || ''}\n${r.stderr || ''}`
+      const m = out.match(/v=([0-9.]+)/)
+      if (m) return m[1]
+    } else if (appKey === 'docker') {
+      const r = spawnSync('docker', ['--version'], { encoding: 'utf-8', timeout: 3000 })
+      const out = `${r.stdout || ''}\n${r.stderr || ''}`
+      const m = out.match(/Docker version\s+([0-9.]+[a-zA-Z0-9._-]*)/i)
+      if (m) return m[1]
+    } else if (appKey === 'fail2ban') {
+      const r = spawnSync('fail2ban-client', ['--version'], { encoding: 'utf-8', timeout: 3000 })
+      const out = `${r.stdout || ''}\n${r.stderr || ''}`
+      const m = out.match(/Fail2Ban\s+v?([0-9.]+)/i)
+      if (m) return m[1]
+    } else if (appKey === 'sqlite3') {
+      const r = spawnSync('sqlite3', ['--version'], { encoding: 'utf-8', timeout: 3000 })
+      const out = (r.stdout || '').trim()
+      const m = out.match(/^([0-9.]+)/)
+      if (m) return m[1]
+    } else if (appKey === 'git') {
+      const r = spawnSync('git', ['--version'], { encoding: 'utf-8', timeout: 3000 })
+      const out = (r.stdout || '').trim()
+      const m = out.match(/git version\s+([0-9.]+[a-zA-Z0-9._-]*)/i)
+      if (m) return m[1]
+    } else if (appKey === 'htop') {
+      const r = spawnSync('htop', ['--version'], { encoding: 'utf-8', timeout: 3000 })
+      const out = (r.stdout || '').trim()
+      const m = out.match(/htop\s+([0-9.]+)/i)
+      if (m) return m[1]
+    } else if (appKey === 'warp') {
+      const r = spawnSync('wg', ['--version'], { encoding: 'utf-8', timeout: 3000 })
+      const out = `${r.stdout || ''}\n${r.stderr || ''}`
+      const m = out.match(/v([0-9.]+)/i)
+      if (m) return `v${m[1]}`
+    }
+  } catch {}
+  return fallbackVer || '已安装 (系统源)'
+}
+
 export function getMarketAppsWithStatus(force = false) {
   const now = Date.now()
   if (!force && cachedMarketApps && (now - cachedMarketAppsTime < 30000)) {
@@ -163,7 +217,7 @@ export function getMarketAppsWithStatus(force = false) {
   }
   const result = marketApps.map(app => {
     let isInstalled = false
-    let currentVer = app.versions[0]
+    let currentVer = undefined
     let service_status = undefined
 
     try {
@@ -193,13 +247,21 @@ export function getMarketAppsWithStatus(force = false) {
             if (m) defaultVer = m[1]
           } catch {}
           if (!defaultVer && installedVers.length > 0) defaultVer = installedVers[0]
+          if (!defaultVer) {
+            try {
+              const phpV = spawnSync('php', ['-v'], { encoding: 'utf-8', timeout: 3000 })
+              const m = (phpV.stdout || '').match(/PHP\s+([0-9]+\.[0-9]+\.[0-9]+)/i)
+              if (m) defaultVer = m[1]
+            } catch {}
+          }
           
-          currentVer = defaultVer ? `PHP ${defaultVer} (CLI) · ${installedVers.length}个版本已装` : 'PHP 8.3'
+          currentVer = defaultVer ? `PHP ${defaultVer} (CLI) · ${installedVers.length || 1}个版本已装` : 'PHP (已安装)'
         }
       } else if (app.key === 'nginx') {
         const binExists = fs.existsSync('/usr/sbin/nginx') || fs.existsSync('/usr/bin/nginx')
         if (binExists) {
           isInstalled = true
+          currentVer = detectBinaryVersion('nginx')
           try {
             const act = execSync('systemctl is-active nginx 2>/dev/null || true').toString().trim()
             service_status = act === 'active' ? 'running' : 'stopped'
@@ -233,11 +295,13 @@ export function getMarketAppsWithStatus(force = false) {
               if (m) currentVer = `MySQL ${m[1]}`
             }
           } catch {}
+          if (!currentVer) currentVer = 'MySQL/MariaDB (已安装)'
         }
       } else if (app.key === 'redis') {
         const binExists = fs.existsSync('/usr/bin/redis-server')
         if (binExists) {
           isInstalled = true
+          currentVer = detectBinaryVersion('redis')
           try {
             const act = execSync('systemctl is-active redis-server 2>/dev/null || true').toString().trim()
             service_status = act === 'active' ? 'running' : 'stopped'
@@ -249,6 +313,7 @@ export function getMarketAppsWithStatus(force = false) {
         const binExists = fs.existsSync('/usr/bin/docker')
         if (binExists) {
           isInstalled = true
+          currentVer = detectBinaryVersion('docker')
           try {
             const act = execSync('systemctl is-active docker 2>/dev/null || true').toString().trim()
             service_status = act === 'active' ? 'running' : 'stopped'
@@ -260,6 +325,7 @@ export function getMarketAppsWithStatus(force = false) {
         const binExists = fs.existsSync('/usr/bin/fail2ban-client')
         if (binExists) {
           isInstalled = true
+          currentVer = detectBinaryVersion('fail2ban')
           try {
             const act = execSync('systemctl is-active fail2ban 2>/dev/null || true').toString().trim()
             service_status = act === 'active' ? 'running' : 'stopped'
@@ -271,12 +337,21 @@ export function getMarketAppsWithStatus(force = false) {
         const binExists = fs.existsSync('/usr/bin/wg')
         if (binExists) {
           isInstalled = true
+          currentVer = detectBinaryVersion('warp')
           service_status = warpConfig.status === 'connected' ? 'running' : 'stopped'
         }
-      } else {
-        const child = spawnSync('which', [app.bin], { encoding: 'utf-8' })
-        if (child.status === 0 && child.stdout.trim()) {
+      } else if (app.key === 'nodejs') {
+        const binExists = fs.existsSync('/usr/bin/node') || fs.existsSync('/usr/local/bin/node') || Boolean(process.versions?.node)
+        if (binExists) {
           isInstalled = true
+          currentVer = detectBinaryVersion('nodejs', process.version)
+        }
+      } else {
+        const whichCmd = process.platform === 'win32' ? 'where' : 'which'
+        const child = spawnSync(whichCmd, [app.bin], { encoding: 'utf-8', timeout: 3000 })
+        if (child.status === 0 && (child.stdout || '').trim()) {
+          isInstalled = true
+          currentVer = detectBinaryVersion(app.key)
         }
       }
     } catch {
@@ -287,7 +362,8 @@ export function getMarketAppsWithStatus(force = false) {
       ...app,
       status: isInstalled ? 'installed' : 'not_installed',
       service_status,
-      current_version: isInstalled ? currentVer : undefined
+      current_version: isInstalled ? currentVer : undefined,
+      install_source: '发行版 APT 官方源'
     }
   })
   cachedMarketApps = result
@@ -323,6 +399,17 @@ export async function handleApps(pathname, req, res, url, ctx) {
       }
     }
 
+    for (const existing of appInstallTasks.values()) {
+      if (existing.stage === 'installing') {
+        if (existing.app_key === appKey) {
+          res.json({ task_id: existing.task_id, task: existing }, '该软件正在安装中，已连接到当前任务')
+          return true
+        }
+        res.json({ task_id: existing.task_id }, `当前已有安装任务 [${existing.app_key}] 正在运行，请等待其完成后再试`, 409)
+        return true
+      }
+    }
+
     const taskId = `task_${Date.now()}`
     const task = {
       task_id: taskId,
@@ -330,7 +417,8 @@ export async function handleApps(pathname, req, res, url, ctx) {
       stage: 'installing',
       progress_percent: 20,
       logs: [`[armguard-pkg] 正在调用 apt-get 安装 ${targetDisplayName} (${pkgName})...`],
-      log_tail: `正在安装 ${targetDisplayName}...`
+      log_tail: `正在安装 ${targetDisplayName}...`,
+      started_at: new Date().toISOString()
     }
     appInstallTasks.set(taskId, task)
 
@@ -369,6 +457,7 @@ export async function handleApps(pathname, req, res, url, ctx) {
       } else {
         task.stage = 'failed'
         task.progress_percent = 100
+        task.error_message = `安装失败，退出码: ${code}`
         task.logs.push(`安装失败，退出码: ${code}`)
         task.log_tail = `安装失败，退出码: ${code}`
       }
@@ -377,35 +466,66 @@ export async function handleApps(pathname, req, res, url, ctx) {
     child.on('error', (err) => {
       task.stage = 'failed'
       task.progress_percent = 100
+      task.error_message = err.message
       task.logs.push(`错误: ${err.message}`)
       task.log_tail = `错误: ${err.message}`
     })
 
-    res.json({ task_id: taskId }, '安装任务已创建')
+    res.json({ task_id: taskId, task }, '安装任务已创建')
     return true
   }
 
+  // Uninstall App (REV-009: block uninstalling panel runtime nodejs; REV-010: verify apt-get exit status)
   const uninstallMatch = pathname.match(/^\/api\/v1\/apps\/([a-zA-Z0-9_-]+)\/uninstall$/)
   if (uninstallMatch && req.method === 'POST') {
     const appKey = uninstallMatch[1]
     const target = marketApps.find(a => a.key === appKey)
+    if (appKey === 'nodejs' || target?.protected_runtime) {
+      res.json(
+        null,
+        target?.protected_reason || '安全拦截：Node.js 为当前 ArmGuard 面板的核心运行时依赖，禁止通过商店卸载！',
+        403
+      )
+      return true
+    }
     const pkgName = target?.pkg || appKey
     try {
-      spawnSync('apt-get', ['remove', '-y', pkgName])
+      const rmRes = spawnSync('apt-get', ['remove', '-y', pkgName], { encoding: 'utf-8', timeout: 120000 })
+      if (rmRes.error || rmRes.status !== 0) {
+        const detail = rmRes.error
+          ? rmRes.error.message
+          : ((rmRes.stderr || rmRes.stdout || '').trim() || `apt-get 退出码 ${rmRes.status}`)
+        res.json(null, `卸载失败: ${detail}`, 500)
+        return true
+      }
       invalidateMarketAppsCache()
       ctx.logOperation(ctx.currentUser(), '卸载应用软件', target?.name || appKey)
       res.json(null, '应用已成功卸载')
     } catch (e) {
-      res.json(null, e.message, 500)
+      res.json(null, `卸载失败: ${e.message}`, 500)
     }
     return true
   }
 
+  // Install Progress (REV-013: return 404/unknown for unknown task_id instead of fake 100% done)
   const progressMatch = pathname.match(/^\/api\/v1\/apps\/([a-zA-Z0-9_-]+)\/install-progress$/)
   if (progressMatch) {
     const taskId = url.searchParams.get('task_id')
-    const task = appInstallTasks.get(taskId) || { task_id: taskId, stage: 'done', progress_percent: 100, log_tail: '已完成', logs: [] }
-    res.json(task)
+    if (!taskId || !appInstallTasks.has(taskId)) {
+      res.json(
+        {
+          task_id: taskId || '',
+          stage: 'unknown',
+          progress_percent: 0,
+          log_tail: '未找到对应的安装任务（可能不存在或面板已重启）',
+          logs: []
+        },
+        '未找到对应的安装任务',
+        404
+      )
+      return true
+    }
+    res.json(appInstallTasks.get(taskId))
     return true
   }
 
@@ -987,29 +1107,33 @@ export async function handleApps(pathname, req, res, url, ctx) {
     }
   }
 
-  // Raw config save
+  // Raw config save (REV-007: transactional save with backup & rollback on validation failure)
   const rawCfgMatch = pathname.match(/^\/api\/v1\/apps\/([a-zA-Z0-9_-]+)\/raw-config$/)
   if (rawCfgMatch && req.method === 'PUT') {
     const appKey = rawCfgMatch[1]
     const body = await ctx.parseBody(req, res)
     const targetPath = body.file_path
-    const content = body.content || ''
+    const content = body.content ?? ''
 
     if (!targetPath || !fs.existsSync(targetPath)) {
       res.json(null, '配置文件路径不存在', 400)
       return true
     }
 
+    let previousContent = null
     try {
+      previousContent = fs.readFileSync(targetPath, 'utf8')
       fs.writeFileSync(targetPath, content, 'utf8')
 
       if (appKey === 'nginx') {
-        const testRes = spawnSync('nginx', ['-t'], { encoding: 'utf-8' })
-        if (testRes.status !== 0) {
-          res.json(null, `Nginx 语法测试未通过: ${testRes.stderr}`, 500)
+        const testRes = spawnSync('nginx', ['-t'], { encoding: 'utf-8', timeout: 15000 })
+        if (testRes.error || testRes.status !== 0) {
+          fs.writeFileSync(targetPath, previousContent, 'utf8')
+          const detail = (testRes.stderr || testRes.stdout || testRes.error?.message || `退出码 ${testRes.status}`).trim()
+          res.json(null, `Nginx 语法测试未通过，已自动回滚原配置: ${detail}`, 500)
           return true
         }
-        execSync('systemctl reload nginx 2>/dev/null || true')
+        try { spawnSync('systemctl', ['reload', 'nginx'], { encoding: 'utf-8', timeout: 15000 }) } catch {}
       } else if (appKey === 'php') {
         const m = targetPath.match(/\/etc\/php\/([0-9.]+)\//)
         const v = m ? m[1] : '8.3'
@@ -1028,7 +1152,10 @@ export async function handleApps(pathname, req, res, url, ctx) {
       res.json(null, '原生配置文件已保存并热重载生效')
       return true
     } catch (e) {
-      res.json(null, `保存失败: ${e.message}`, 500)
+      if (previousContent !== null) {
+        try { fs.writeFileSync(targetPath, previousContent, 'utf8') } catch {}
+      }
+      res.json(null, `保存失败，已恢复原配置: ${e.message}`, 500)
       return true
     }
   }

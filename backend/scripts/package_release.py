@@ -27,6 +27,21 @@ if not os.path.isfile(ws_pkg):
 
 print(f"Creating standalone distribution packages from {base_dir}...")
 
+build_commit = "unknown"
+try:
+    git_res = subprocess.run(
+        ["git", "rev-parse", "--short", "HEAD"],
+        cwd=base_dir,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    if git_res.returncode == 0 and git_res.stdout.strip():
+        build_commit = git_res.stdout.strip()
+except Exception:
+    pass
+commit_bytes = (build_commit + "\n").encode("utf-8")
+
 items_to_pack = [
     ("frontend/dist", "dist"),
     ("backend", "backend"),
@@ -91,6 +106,11 @@ with tarfile.open(tar_path, "w:gz") as tar:
             info.mtime = int(os.path.getmtime(file_full))
             info.mode = 0o755 if is_exec else 0o644
             tar.addfile(info, io.BytesIO(data))
+    commit_info = tarfile.TarInfo(name="armguard/BUILD_COMMIT")
+    commit_info.size = len(commit_bytes)
+    commit_info.mtime = int(time.time())
+    commit_info.mode = 0o644
+    tar.addfile(commit_info, io.BytesIO(commit_bytes))
 
 with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
     for src_rel, dest_rel in items_to_pack:
@@ -102,6 +122,7 @@ with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
             perm = 0o755 if is_exec else 0o644
             zinfo.external_attr = (0o100000 | perm) << 16
             zipf.writestr(zinfo, data)
+    zipf.writestr("armguard/BUILD_COMMIT", commit_bytes)
 
 print("[SUCCESS] Packages created successfully:")
 print("Tarball:", tar_path, f"({os.path.getsize(tar_path) / 1024 / 1024:.2f} MB)")

@@ -49,7 +49,7 @@ import { siteApi, SiteItem, CreateSiteParams } from '@/api/site'
               <tr *ngFor="let site of sites()">
                 <td>
                   <strong>{{ site.domain }}</strong>
-                  <div *ngIf="site.domains?.length" style="font-size: 0.7rem; color: var(--ag-on-surface-variant)">
+                  <div *ngIf="site.domains.length" style="font-size: 0.7rem; color: var(--ag-on-surface-variant)">
                     +{{ site.domains.length }} 绑定域名
                   </div>
                 </td>

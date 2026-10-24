@@ -239,14 +239,28 @@ import { appStoreApi, AppMarketItem } from '@/api/appstore'
                   </td>
                   <td>{{ formatBytes(p.mem_bytes) }} ({{ p.mem_percent.toFixed(1) }}%)</td>
                   <td>
-                    <button
-                      mat-icon-button
-                      color="warn"
-                      matTooltip="终止进程 (SIGTERM)"
-                      (click)="handleKillProcess(p.pid, p.name)"
-                    >
-                      <mat-icon>cancel</mat-icon>
-                    </button>
+                    <div style="display: flex; gap: 4px; align-items: center">
+                      <button
+                        mat-button
+                        color="primary"
+                        [disabled]="p.pid <= 1"
+                        matTooltip="发送 SIGTERM 请求进程优雅退出并保存数据"
+                        aria-label="温和结束进程 (SIGTERM)"
+                        (click)="handleKillProcess(p.pid, p.name, false)"
+                      >
+                        结束 (SIGTERM)
+                      </button>
+                      <button
+                        mat-button
+                        color="warn"
+                        [disabled]="p.pid <= 1"
+                        matTooltip="发送 SIGKILL (-9) 强制立即杀死进程（可能丢失未保存数据）"
+                        aria-label="强制杀死进程 (SIGKILL)"
+                        (click)="handleKillProcess(p.pid, p.name, true)"
+                      >
+                        强杀 (SIGKILL)
+                      </button>
+                    </div>
                   </td>
                 </tr>
                 <tr *ngIf="system.processes().length === 0">
@@ -555,7 +569,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
   ngOnInit() {
     this.refreshAll()
     this.procInterval = setInterval(() => {
-      this.system.fetchProcesses(this.procSort(), 15)
+      this.system.fetchProcesses(this.procSort(), 15, true)
     }, 5000)
   }
 
@@ -567,7 +581,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
     await Promise.all([
       this.system.fetchInfo(),
       this.system.fetchRealtime(),
-      this.system.fetchProcesses(this.procSort(), 15),
+      this.system.fetchProcesses(this.procSort(), 15, true),
       this.loadQuickApps(),
     ])
   }
@@ -583,14 +597,15 @@ export class DashboardComponent implements OnInit, OnDestroy {
 
   changeProcessSort(sort: 'cpu' | 'mem') {
     this.procSort.set(sort)
-    this.system.fetchProcesses(sort, 15)
+    this.system.fetchProcesses(sort, 15, false)
   }
 
-  async handleKillProcess(pid: number, name: string) {
-    if (!confirm(`确定要向进程 ${name} (PID: ${pid}) 发送 SIGTERM 终止信号吗？`)) return
+  async handleKillProcess(pid: number, name: string, force = false) {
+    const sigName = force ? 'SIGKILL (-9 强制终止，未落盘数据可能丢失)' : 'SIGTERM (-15 温和终止，允许应用保存状态)'
+    if (!confirm(`确定要向进程 ${name} (PID: ${pid}) 发送 ${sigName} 信号吗？`)) return
     try {
-      await this.system.killProcess(pid)
-      this.toast.success(`已终止进程 ${name} (PID ${pid})`)
+      await this.system.killProcess(pid, force)
+      this.toast.success(`已向进程 ${name} (PID ${pid}) 发送 ${force ? 'SIGKILL' : 'SIGTERM'} 信号`)
     } catch (e: any) {
       this.toast.error(`终止进程失败: ${e.message}`)
     }

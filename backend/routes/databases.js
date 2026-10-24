@@ -106,7 +106,19 @@ export async function handleDatabases(pathname, req, res, url, ctx) {
   // 1. List / Create
   if (pathname === '/api/v1/databases') {
     if (req.method === 'GET') {
-      res.json({ list: ctx.databases })
+      const list = (ctx.databases || []).map(db => {
+        if (db.type === 'sqlite' && ctx.DATA_DIR) {
+          const dbFile = path.join(ctx.DATA_DIR, db.db_name.endsWith('.db') ? db.db_name : `${db.db_name}.db`)
+          if (fs.existsSync(dbFile)) {
+            try {
+              const st = fs.statSync(dbFile)
+              return { ...db, size_bytes: st.size, status: 'active' }
+            } catch {}
+          }
+        }
+        return db
+      })
+      res.json({ list })
       return true
     }
     if (req.method === 'POST') {
@@ -121,6 +133,7 @@ export async function handleDatabases(pathname, req, res, url, ctx) {
         res.json(null, `不支持的数据库类型 [${dbType}]`, 400)
         return true
       }
+      let actualSizeBytes = 0
       if (dbType === 'mysql' || dbType === 'mariadb') {
         const engines = detectInstalledEngines()
         const targetEng = engines.find(e => e.type === dbType || e.key === dbType)
@@ -153,9 +166,34 @@ export async function handleDatabases(pathname, req, res, url, ctx) {
         }
       } else {
         const dbPath = path.join(ctx.DATA_DIR, `${safeDbName}.db`)
+        const existedBefore = fs.existsSync(dbPath)
+        if (existedBefore || (ctx.databases || []).some(d => d.db_name === `${safeDbName}.db`)) {
+          res.json(null, `数据库 [${safeDbName}.db] 已存在`, 409)
+          return true
+        }
+        const sqRes = spawnSync(
+          'sqlite3',
+          [
+            dbPath,
+            'CREATE TABLE IF NOT EXISTS sample (id INTEGER PRIMARY KEY, note TEXT); INSERT INTO sample (note) VALUES ("Initialized by ArmGuard");'
+          ],
+          { encoding: 'utf-8', timeout: 15000 }
+        )
+        if (sqRes.error || sqRes.status !== 0 || !fs.existsSync(dbPath)) {
+          if (!existedBefore && fs.existsSync(dbPath)) {
+            try { fs.unlinkSync(dbPath) } catch {}
+          }
+          const detail = sqRes.error
+            ? (sqRes.error.code === 'ENOENT' ? '系统未安装 sqlite3 命令行工具' : sqRes.error.message)
+            : ((sqRes.stderr || sqRes.stdout || '').trim() || `sqlite3 退出码 ${sqRes.status}`)
+          res.json(null, `创建 SQLite 数据库失败: ${detail}`, 500)
+          return true
+        }
         try {
-          spawnSync('sqlite3', [dbPath, 'CREATE TABLE IF NOT EXISTS sample (id INTEGER PRIMARY KEY, note TEXT); INSERT INTO sample (note) VALUES ("Initialized by ArmGuard");'])
-        } catch {}
+          actualSizeBytes = fs.statSync(dbPath).size
+        } catch {
+          actualSizeBytes = 0
+        }
       }
       const newDb = {
         id: Date.now(),
@@ -163,7 +201,7 @@ export async function handleDatabases(pathname, req, res, url, ctx) {
         db_name: dbType === 'sqlite' ? `${safeDbName}.db` : safeDbName,
         username: body.username || 'root',
         character_set: body.character_set || 'utf8mb4',
-        size_bytes: 16384,
+        size_bytes: actualSizeBytes,
         status: 'active',
         backup_count: 0,
         created_at: new Date().toLocaleString()

@@ -15,23 +15,31 @@ export interface FileItem {
 export interface FileListResult {
   current_path: string
   parent_path: string
+  default_path?: string
+  allowed_roots?: string[]
   files: FileItem[]
   total_files: number
   total_dirs: number
 }
 
 export const fileApi = {
-  getList: (path = '/') => apiClient.get<ApiResponse<FileListResult>>('/files/list', { params: { path } }),
+  getList: (path?: string) =>
+    apiClient.get<ApiResponse<FileListResult>>('/files/list', {
+      params: path && path.trim() !== '' ? { path } : undefined,
+    }),
   getContent: (path: string) => apiClient.get<ApiResponse<{ content: string; encoding: string; size: number }>>('/files/content', { params: { path } }),
   saveContent: (path: string, content: string) => apiClient.put<ApiResponse<void>>('/files/content', { path, content }),
-  createFile: (path: string, isDir = false) => apiClient.post<ApiResponse<void>>('/files/create', { path, is_dir: isDir }),
-  renameFile: (oldPath: string, newPath: string) => apiClient.post<ApiResponse<void>>('/files/rename', { old_path: oldPath, new_path: newPath }),
+  createFile: (path: string, isDir = false, overwrite = false) =>
+    apiClient.post<ApiResponse<void>>('/files/create', { path, is_dir: isDir, overwrite }),
+  renameFile: (oldPath: string, newPath: string, overwrite = false) =>
+    apiClient.post<ApiResponse<void>>('/files/rename', { old_path: oldPath, new_path: newPath, overwrite }),
   deleteFiles: (paths: string[]) => apiClient.delete<ApiResponse<void>>('/files', { data: { paths } }),
-  uploadFile: (path: string, file: File, onProgress?: (percent: number) => void) => {
+  uploadFile: (path: string, file: File, onProgress?: (percent: number) => void, overwrite = false) => {
     const formData = new FormData()
     formData.append('path', path)
+    if (overwrite) formData.append('overwrite', 'true')
     formData.append('file', file)
-    return apiClient.post<ApiResponse<{ path: string }>>('/files/upload', formData, {
+    return apiClient.post<ApiResponse<{ path: string; count?: number }>>('/files/upload', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
       onUploadProgress: (progressEvent) => {
         if (progressEvent.total && onProgress) {
@@ -42,7 +50,9 @@ export const fileApi = {
     })
   },
   downloadFilePath: (path: string) => `/api/v1/files/download?path=${encodeURIComponent(path)}`,
-  compress: (paths: string[], targetName: string, format: 'zip' | 'tar.gz' = 'zip') => apiClient.post<ApiResponse<{ target_path: string }>>('/files/compress', { paths, target_name: targetName, format }),
-  decompress: (path: string, destPath?: string) => apiClient.post<ApiResponse<void>>('/files/decompress', { path, dest_path: destPath }),
+  compress: (paths: string[], targetName: string, format: 'zip' | 'tar.gz' = 'tar.gz') =>
+    apiClient.post<ApiResponse<{ target_path: string }>>('/files/compress', { paths, target_name: targetName, format }),
+  decompress: (path: string, destPath?: string, overwrite = false) =>
+    apiClient.post<ApiResponse<void>>('/files/decompress', { path, dest_path: destPath, overwrite }),
   changePermission: (path: string, mode: string, owner?: string, group?: string, recursive = false) => apiClient.put<ApiResponse<void>>('/files/permission', { path, mode, owner, group, recursive }),
 }

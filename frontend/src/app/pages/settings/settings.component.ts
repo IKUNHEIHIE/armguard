@@ -20,7 +20,8 @@ import { downloadWithTicket } from '@/utils/download'
             <span>面板核心设置与安全中心 (Panel Settings)</span>
           </h2>
           <p class="m3-page-subtitle font-mono">
-            端口与 HTTPS 证书绑定、管理员凭证更新、大模型 API 接入、Eco 节能推流与面板配置灾备
+            端口与 HTTPS 证书绑定、管理员凭证更新、大模型 API 接入、Eco 节能推流与面板配置灾备 · 版本:
+            {{ settings.current_version || 'v0.2.0' }} ({{ settings.build_commit || settings.runtime?.build_commit || 'source' }})
           </p>
         </div>
         <div class="m3-page-actions">
@@ -33,6 +34,26 @@ import { downloadWithTicket } from '@/utils/download'
             <span>{{ saving() ? '保存中...' : '保存当前设置' }}</span>
           </button>
         </div>
+      </div>
+
+      <!-- Plaintext HTTP Warning Banner (REV-004) -->
+      <div
+        *ngIf="(settings.runtime?.effective_protocol || 'http') === 'http'"
+        class="m3-card font-mono"
+        style="border-color: var(--ag-warning); background: var(--ag-warning-container); display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px"
+      >
+        <div style="display: flex; align-items: center; gap: 10px; color: var(--ag-warning)">
+          <mat-icon>lock_open</mat-icon>
+          <div>
+            <strong>当前管理链路使用明文 HTTP / WS</strong>
+            <div style="font-size: 0.76rem">
+              在不受信任的网络环境中，登录密码、Bearer 令牌与 Web 终端流量可能被监听或篡改。建议立即配置受信任 TLS 证书或生成本机 HTTPS 证书。
+            </div>
+          </div>
+        </div>
+        <button mat-flat-button color="primary" (click)="generateSelfSignedHttps()" [disabled]="generatingSsl()">
+          {{ generatingSsl() ? '正在生成...' : '一键生成自签名 HTTPS 证书并启用' }}
+        </button>
       </div>
 
       <mat-tab-group animationDuration="160ms">
@@ -219,12 +240,18 @@ import { downloadWithTicket } from '@/utils/download'
         <!-- Tab 4: Webhook Alerts -->
         <mat-tab label="Webhook 告警通知">
           <div class="m3-card font-mono" style="margin-top: 14px; display: flex; flex-direction: column; gap: 14px">
-            <div class="m3-tonal-card" style="font-size: 0.76rem; color: var(--ag-warning)">
-              说明：当前支持保存 Webhook 通道并执行真实 HTTP 与平台业务码（飞书/钉钉/企业微信/Telegram）连通性校验。
+            <div class="m3-tonal-card" style="font-size: 0.78rem; border-color: var(--ag-warning); color: var(--ag-warning); display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px">
+              <div>
+                <strong>⚠️ 自动事件推送尚未实现 (alert_auto_push_supported = false)</strong>
+                <div style="margin-top: 4px; color: var(--ag-on-surface-variant)">
+                  当前版本仅支持保存 Webhook 通道配置及手动触发真实 HTTP 与平台业务状态码（飞书/钉钉/企业微信/Telegram）连通性测试，负载/磁盘/登录失败自动事件后台触发推送尚未实现。
+                </div>
+              </div>
+              <span class="m3-badge warning">自动事件触发：未实现</span>
             </div>
 
             <div style="display: flex; justify-content: space-between; align-items: center">
-              <strong>启用 Webhook 告警机器人通道</strong>
+              <strong>保存 Webhook 告警通道配置（仅用于连通性测试投递）</strong>
               <mat-slide-toggle [(ngModel)]="settings.webhook_enabled"></mat-slide-toggle>
             </div>
 
@@ -294,6 +321,7 @@ export class SettingsComponent implements OnInit {
 
   readonly saving = signal(false)
   readonly backingUp = signal(false)
+  readonly generatingSsl = signal(false)
   readonly backups = signal<PanelBackupItem[]>([])
 
   settings: PanelSettings = {
@@ -348,21 +376,40 @@ export class SettingsComponent implements OnInit {
           this.system.setPanelTitle(this.settings.panel_title)
         }
       }
-    } catch {}
+    } catch (e: any) {
+      this.toast.error(`加载面板设置失败: ${e.message}`)
+    }
+  }
+
+  async generateSelfSignedHttps() {
+    this.generatingSsl.set(true)
+    try {
+      const res = await settingsApi.generateSelfSignedCert()
+      await this.loadSettings()
+      this.toast.success(res.data?.message || '自签名 HTTPS 证书已生成并启用，请重启面板服务生效')
+    } catch (e: any) {
+      this.toast.error(e.message)
+    } finally {
+      this.generatingSsl.set(false)
+    }
   }
 
   async loadBackups() {
     try {
       const res = await settingsApi.getPanelBackups()
       this.backups.set(res.data?.data?.list || [])
-    } catch {}
+    } catch (e: any) {
+      this.toast.error(`加载备份列表失败: ${e.message}`)
+    }
   }
 
   async loadAi() {
     try {
       const res = await aiApi.getConfig()
       if (res.data?.data) this.aiForm = { ...this.aiForm, ...res.data.data }
-    } catch {}
+    } catch (e: any) {
+      this.toast.error(`加载 AI 配置失败: ${e.message}`)
+    }
   }
 
   async saveBaseSettings() {

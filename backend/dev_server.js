@@ -39,10 +39,27 @@ try {
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
-let PANEL_VERSION = 'v0.1.0-alpha'
+let PANEL_VERSION = 'v0.2.0'
 try {
   const pkg = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../package.json'), 'utf8'))
   if (pkg.version) PANEL_VERSION = `v${pkg.version}`
+} catch {}
+
+let BUILD_COMMIT = 'unknown'
+try {
+  const commitFile = path.resolve(__dirname, '../BUILD_COMMIT')
+  if (fs.existsSync(commitFile)) {
+    BUILD_COMMIT = fs.readFileSync(commitFile, 'utf8').trim() || 'unknown'
+  } else {
+    const gitRes = spawnSync('git', ['rev-parse', '--short', 'HEAD'], {
+      cwd: path.resolve(__dirname, '..'),
+      encoding: 'utf-8',
+      timeout: 2000
+    })
+    if (gitRes.status === 0 && (gitRes.stdout || '').trim()) {
+      BUILD_COMMIT = gitRes.stdout.trim()
+    }
+  }
 } catch {}
 
 const HOST = process.env.HOST || '::'
@@ -97,7 +114,7 @@ try {
 } catch (err) {
   console.error(`[ArmGuard] Cannot create data directory ${DATA_DIR}: ${err.message}`)
 }
-for (const dir of [BACKUP_DIR, SSL_DIR, WWW_ROOT, NGINX_CONF_DIR, STREAM_CONF_DIR]) {
+for (const dir of [BACKUP_DIR, SSL_DIR, WWW_ROOT, NGINX_CONF_DIR]) {
   try { fs.mkdirSync(dir, { recursive: true }) } catch {}
 }
 
@@ -316,11 +333,19 @@ function isValidDomain(domain) {
   return /^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/.test(domain)
 }
 
-// Telemetry polling must not keep an idle session alive forever
+// Telemetry and background polling must not keep an idle session alive forever (REV-003)
 const PASSIVE_ENDPOINTS = new Set([
   '/api/v1/system/monitor/realtime',
-  '/api/v1/system/hardware/thermal'
+  '/api/v1/system/hardware/thermal',
+  '/api/v1/system/processes'
 ])
+
+function isPassiveRequest(req, url) {
+  if (PASSIVE_ENDPOINTS.has(url.pathname)) return true
+  if (/^\/api\/v1\/apps\/[^/]+\/install-progress$/.test(url.pathname)) return true
+  if (req.headers['x-ag-passive'] === '1' || url.searchParams.get('passive') === '1') return true
+  return false
+}
 
 function extractRequestToken(req) {
   const authHeader = req.headers['authorization'] || ''
@@ -332,7 +357,7 @@ function extractRequestToken(req) {
 /** Returns the authenticated session or null (after writing a 401). */
 function checkAuth(req, res, url) {
   const token = extractRequestToken(req)
-  let session = token ? getSession(token, { touch: !PASSIVE_ENDPOINTS.has(url.pathname) }) : null
+  let session = token ? getSession(token, { touch: !isPassiveRequest(req, url) }) : null
   if (!session && !token) {
     session = consumeDownloadTicket(req, url)
   }
@@ -651,7 +676,8 @@ const runtime = {
   protocol: 'http',
   ssl_error: null,
   started_at: new Date().toISOString(),
-  version: PANEL_VERSION
+  version: PANEL_VERSION,
+  build_commit: BUILD_COMMIT
 }
 
 let tlsOptions = null
@@ -674,7 +700,7 @@ if (settings.ssl_enabled) {
 const ctx = {
   DATA_DIR, USERS_FILE, SITES_FILE, DATABASES_FILE, CERTS_FILE, CRONTAB_FILE,
   SETTINGS_FILE, AI_CONFIG_FILE, OPS_LOG_FILE, BACKUP_DIR, SSL_DIR, NGINX_CONF_DIR, WWW_ROOT,
-  STREAM_RULES_FILE, STREAM_CONF_DIR, PANEL_VERSION, INITIAL_PASSWORD_FILE: path.join(DATA_DIR, INITIAL_PASSWORD_FILENAME),
+  STREAM_RULES_FILE, STREAM_CONF_DIR, PANEL_VERSION, BUILD_COMMIT, INITIAL_PASSWORD_FILE: path.join(DATA_DIR, INITIAL_PASSWORD_FILENAME),
   sites, databases, sslCerts, crontabs, streamRules, settings, aiConfig, runtime,
   loadJSON, saveJSON, getOpsLogs, logOperation, hashPassword, verifyPassword, currentUser,
   generateSessionToken, revokeSessionToken, isValidToken, getSession, getSessionPolicy, renameSessions, revokeUserSessions,
@@ -690,6 +716,18 @@ initWarpConfig(ctx)
 
 // HTTP(S) request handler
 async function handleHttpRequest(req, res) {
+  // Baseline Security Headers (REV-004)
+  res.setHeader('X-Content-Type-Options', 'nosniff')
+  res.setHeader('X-Frame-Options', 'DENY')
+  res.setHeader('Referrer-Policy', 'same-origin')
+  res.setHeader(
+    'Content-Security-Policy',
+    "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob: https://img.shields.io; connect-src 'self' ws: wss:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+  )
+  if (runtime.protocol === 'https') {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
+  }
+
   const currentSettings = loadJSON(SETTINGS_FILE, settings)
   const clientIp = getClientIp(req, currentSettings)
   const reqStore = requestContext.getStore()

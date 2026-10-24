@@ -133,9 +133,9 @@ export class SystemService {
     }
   }
 
-  async fetchProcesses(sortBy: 'cpu' | 'mem' = 'cpu', limit = 30) {
+  async fetchProcesses(sortBy: 'cpu' | 'mem' = 'cpu', limit = 30, passive = false) {
     try {
-      const res = await systemApi.getProcesses(sortBy, limit)
+      const res = await systemApi.getProcesses(sortBy, limit, passive)
       if (res.data.code === 0 && res.data.data) {
         this.processes.set(res.data.data.list || [])
       }
@@ -144,8 +144,8 @@ export class SystemService {
     }
   }
 
-  async killProcess(pid: number) {
-    const res = await systemApi.killProcess(pid)
+  async killProcess(pid: number, force = false) {
+    const res = await systemApi.killProcess(pid, force)
     if (res.data.code === 0) {
       await this.fetchProcesses()
       return true

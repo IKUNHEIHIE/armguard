@@ -12,6 +12,7 @@ export interface SystemInfo {
   is_arm: boolean
   arm_board_model?: string | null
   panel_version: string
+  build_commit?: string
   memory_total_bytes: number | null
   disk_total_bytes: number | null
 }
@@ -113,6 +114,14 @@ export const systemApi = {
   getRealtimeMonitor: () => apiClient.get<ApiResponse<RealtimeMonitorData>>('/system/monitor/realtime'),
   getARMThermal: () => apiClient.get<ApiResponse<ARMThermalData>>('/system/hardware/thermal'),
   getHistory: (range = '1h') => apiClient.get<ApiResponse<{ timestamps: string[]; cpu: number[]; memory: number[]; temp: number[]; net_rx: number[]; net_tx: number[] }>>('/system/monitor/history', { params: { range } }),
-  getProcesses: (sortBy: 'cpu' | 'mem' = 'cpu', limit = 30) => apiClient.get<ApiResponse<{ list: ProcessItem[] }>>('/system/processes', { params: { sort_by: sortBy, limit } }),
-  killProcess: (pid: number) => apiClient.post<ApiResponse<void>>(`/system/processes/${pid}/kill`),
+  getProcesses: (sortBy: 'cpu' | 'mem' = 'cpu', limit = 30, passive = false) =>
+    apiClient.get<ApiResponse<{ list: ProcessItem[] }>>('/system/processes', {
+      params: { sort_by: sortBy, limit },
+      headers: passive ? { 'X-AG-Passive': '1' } : undefined,
+    }),
+  killProcess: (pid: number, force = false) =>
+    apiClient.post<ApiResponse<{ pid: number; signal: string }>>(`/system/processes/${pid}/kill`, {
+      force,
+      signal: force ? 'SIGKILL' : 'SIGTERM',
+    }),
 }

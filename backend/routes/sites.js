@@ -122,6 +122,34 @@ export function renderNginxSiteConf(site, ctx) {
   }
 }
 
+function commitNginxSiteConfig(confPath, newConfContent) {
+  const prevContent = fs.existsSync(confPath) ? fs.readFileSync(confPath, 'utf8') : null
+  try {
+    fs.mkdirSync(path.dirname(confPath), { recursive: true })
+    fs.writeFileSync(confPath, newConfContent, 'utf8')
+  } catch (e) {
+    return { ok: false, error: `写入配置文件失败: ${e.message}` }
+  }
+
+  const testRes = spawnSync('nginx', ['-t'], { encoding: 'utf-8', timeout: 15000 })
+  if (testRes.error || testRes.status !== 0) {
+    try {
+      if (prevContent === null) {
+        if (fs.existsSync(confPath)) fs.unlinkSync(confPath)
+      } else {
+        fs.writeFileSync(confPath, prevContent, 'utf8')
+      }
+    } catch {}
+    const detail = (testRes.stderr || testRes.stdout || testRes.error?.message || `退出码 ${testRes.status}`).trim()
+    return { ok: false, error: detail }
+  }
+
+  try {
+    spawnSync('systemctl', ['reload', 'nginx'], { encoding: 'utf-8', timeout: 15000 })
+  } catch {}
+  return { ok: true }
+}
+
 export async function handleSites(pathname, req, res, url, ctx) {
   if (!pathname.startsWith('/api/v1/sites')) return false
 
@@ -137,10 +165,16 @@ export async function handleSites(pathname, req, res, url, ctx) {
         res.json(null, '域名格式不合法，仅支持字母、数字与横线', 400)
         return true
       }
+      if (ctx.sites.some(s => s.domain === body.domain)) {
+        res.json(null, `站点域名 [${body.domain}] 已存在`, 409)
+        return true
+      }
       const sitePath = body.path || path.join(ctx.WWW_ROOT, body.domain)
+      const siteDirExisted = fs.existsSync(sitePath)
       fs.mkdirSync(sitePath, { recursive: true })
       const sampleIndex = path.join(sitePath, 'index.html')
-      if (!fs.existsSync(sampleIndex)) {
+      const indexCreated = !fs.existsSync(sampleIndex)
+      if (indexCreated) {
         fs.writeFileSync(sampleIndex, `<!doctype html><html><head><meta charset="utf-8"><title>${body.domain}</title></head><body style="font-family:sans-serif;padding:40px;background:#0b0f19;color:#fff;"><h1>Welcome to ${body.domain}</h1><p>Powered by ArmGuard on ARM64 Linux</p></body></html>`, 'utf8')
       }
 
@@ -151,7 +185,7 @@ export async function handleSites(pathname, req, res, url, ctx) {
         domains: validDomains,
         path: sitePath,
         sub_dir: body.sub_dir || '',
-        port: body.port ? parseInt(body.port, 10) : 80,
+        port: body.port !== undefined && body.port !== null ? parseInt(body.port, 10) : 80,
         php_version: body.php_version || 'static',
         proxy_enabled: body.php_version === 'proxy' || !!body.proxy_enabled,
         proxy_pass: body.proxy_pass || '',
@@ -170,12 +204,18 @@ export async function handleSites(pathname, req, res, url, ctx) {
         created_at: new Date().toLocaleString()
       }
 
+      const confPath = path.join(ctx.NGINX_CONF_DIR, `${body.domain}.conf`)
       const confContent = renderNginxSiteConf(newSite, ctx)
-      fs.writeFileSync(path.join(ctx.NGINX_CONF_DIR, `${body.domain}.conf`), confContent, 'utf8')
-      try {
-        const t = spawnSync('nginx', ['-t'])
-        if (t.status === 0) spawnSync('systemctl', ['reload', 'nginx'])
-      } catch {}
+      const tx = commitNginxSiteConfig(confPath, confContent)
+      if (!tx.ok) {
+        if (!siteDirExisted) {
+          try { fs.rmSync(sitePath, { recursive: true, force: true }) } catch {}
+        } else if (indexCreated) {
+          try { fs.unlinkSync(sampleIndex) } catch {}
+        }
+        res.json(null, `站点创建失败，Nginx 语法校验未通过并已回滚: ${tx.error}`, 500)
+        return true
+      }
 
       ctx.sites.unshift(newSite)
       ctx.saveJSON(ctx.SITES_FILE, ctx.sites)
@@ -227,19 +267,19 @@ export async function handleSites(pathname, req, res, url, ctx) {
       res.json(null, '站点不存在', 404)
       return true
     }
+    const prevSnapshot = { ...target }
     const body = await ctx.parseBody(req, res)
     Object.assign(target, body)
 
     const confContent = renderNginxSiteConf(target, ctx)
     const confPath = path.join(ctx.NGINX_CONF_DIR, `${target.domain}.conf`)
-    fs.writeFileSync(confPath, confContent, 'utf8')
-
-    const testRes = spawnSync('nginx', ['-t'], { encoding: 'utf-8' })
-    if (testRes.status !== 0) {
-      res.json(null, `Nginx 语法错误: ${testRes.stderr}`, 500)
+    const tx = commitNginxSiteConfig(confPath, confContent)
+    if (!tx.ok) {
+      for (const k of Object.keys(target)) delete target[k]
+      Object.assign(target, prevSnapshot)
+      res.json(null, `Nginx 语法错误，已自动回滚原配置: ${tx.error}`, 500)
       return true
     }
-    execSync('systemctl reload nginx 2>/dev/null || true')
 
     ctx.saveJSON(ctx.SITES_FILE, ctx.sites)
     ctx.logOperation(ctx.currentUser(), '更新站点高级设置', target.domain)
@@ -253,10 +293,16 @@ export async function handleSites(pathname, req, res, url, ctx) {
     const id = parseInt(toggleMatch[1], 10)
     const target = ctx.sites.find(s => s.id === id)
     if (target) {
+      const prevStatus = target.status
       target.status = target.status === 'running' ? 'stopped' : 'running'
       const confContent = renderNginxSiteConf(target, ctx)
-      fs.writeFileSync(path.join(ctx.NGINX_CONF_DIR, `${target.domain}.conf`), confContent, 'utf8')
-      try { execSync('nginx -t && systemctl reload nginx 2>/dev/null || true') } catch {}
+      const confPath = path.join(ctx.NGINX_CONF_DIR, `${target.domain}.conf`)
+      const tx = commitNginxSiteConfig(confPath, confContent)
+      if (!tx.ok) {
+        target.status = prevStatus
+        res.json(null, `切换站点状态失败，Nginx 校验未通过并已回滚: ${tx.error}`, 500)
+        return true
+      }
       ctx.saveJSON(ctx.SITES_FILE, ctx.sites)
       ctx.logOperation(ctx.currentUser(), `${target.status === 'running' ? '启用' : '暂停'}站点`, target.domain)
       res.json({ status: target.status }, `站点已${target.status === 'running' ? '启用' : '暂停'}`)
@@ -298,7 +344,11 @@ export async function handleSites(pathname, req, res, url, ctx) {
   if (configMatch) {
     const id = parseInt(configMatch[1], 10)
     const target = ctx.sites.find(s => s.id === id)
-    const confPath = path.join(ctx.NGINX_CONF_DIR, `${target?.domain}.conf`)
+    if (!target) {
+      res.json(null, '站点不存在', 404)
+      return true
+    }
+    const confPath = path.join(ctx.NGINX_CONF_DIR, `${target.domain}.conf`)
     if (req.method === 'GET') {
       let conf = ''
       try { conf = fs.readFileSync(confPath, 'utf8') } catch {}
@@ -307,14 +357,12 @@ export async function handleSites(pathname, req, res, url, ctx) {
     }
     if (req.method === 'PUT') {
       const body = await ctx.parseBody(req, res)
-      fs.writeFileSync(confPath, body.nginx_conf, 'utf8')
-      const testRes = spawnSync('nginx', ['-t'], { encoding: 'utf-8' })
-      if (testRes.status !== 0) {
-        res.json(null, `Nginx 配置测试未通过: ${testRes.stderr}`, 500)
+      const tx = commitNginxSiteConfig(confPath, body.nginx_conf || '')
+      if (!tx.ok) {
+        res.json(null, `Nginx 配置测试未通过，已恢复原配置: ${tx.error}`, 500)
         return true
       }
-      try { spawnSync('systemctl', ['reload', 'nginx']) } catch {}
-      ctx.logOperation(ctx.currentUser(), '更新 Nginx 配置文件', target?.domain)
+      ctx.logOperation(ctx.currentUser(), '更新 Nginx 配置文件', target.domain)
       res.json(null, '配置保存并重载成功')
       return true
     }

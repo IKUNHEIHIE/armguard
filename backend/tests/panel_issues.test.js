@@ -404,3 +404,217 @@ test('AG-009 & AG-010: Settings validation rejects invalid SSL cert/key, enforce
   });
   assert.equal(fail3.status, 429);
 });
+
+test('REV-001, REV-002, REV-005, REV-006, REV-011, REV-012: File sandbox symlink protection, no silent overwrite, real multipart upload, and safe archive handling', async () => {
+  const { handleFiles, isProtectedPath } = await import('../routes/files.js');
+  const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ag-rev-files-'));
+
+  try {
+    // 1. REV-002: Symlink pointing to forbidden directory (/etc) must be blocked even for a non-existent child leaf
+    const symlinkDir = path.join(workDir, 'etc-link');
+    let symlinkCreated = false;
+    try {
+      fs.symlinkSync(process.platform === 'win32' ? 'C:\\Windows\\System32' : '/etc', symlinkDir, 'dir');
+      symlinkCreated = true;
+    } catch {}
+    if (symlinkCreated) {
+      const targetThroughLink = path.join(symlinkDir, 'new-escape-file.txt');
+      assert.equal(isProtectedPath(targetThroughLink), true, 'Non-existent leaf inside symlinked forbidden dir must be blocked');
+    }
+
+    // 2. REV-006: Create file and rename must refuse silent overwrite (409) and preserve existing content
+    const existingFile = path.join(workDir, 'keep.txt');
+    fs.writeFileSync(existingFile, 'IMPORTANT_DATA', 'utf8');
+
+    async function callFiles(route, method, body, headers = {}) {
+      let resp;
+      const u = new URL('http://127.0.0.1' + route);
+      await handleFiles(
+        u.pathname,
+        { method, headers },
+        { json: (data = null, message = 'ok', code = 0) => { resp = { code, message, data }; } },
+        u,
+        {
+          isProtectedPath,
+          parseBody: async () => body,
+          currentUser: () => 'opsadmin',
+          logOperation: () => {},
+        }
+      );
+      return resp;
+    }
+
+    const createDup = await callFiles('/api/v1/files/create', 'POST', { path: existingFile, is_dir: false });
+    assert.equal(createDup.code, 409, 'Creating over an existing file must return 409');
+    assert.equal(fs.readFileSync(existingFile, 'utf8'), 'IMPORTANT_DATA', 'Existing file content must not be erased');
+
+    const renameSrc = path.join(workDir, 'src.txt');
+    fs.writeFileSync(renameSrc, 'NEW_DATA', 'utf8');
+    const renameDup = await callFiles('/api/v1/files/rename', 'POST', { old_path: renameSrc, new_path: existingFile });
+    assert.equal(renameDup.code, 409, 'Renaming over an existing file must return 409');
+    assert.equal(fs.readFileSync(existingFile, 'utf8'), 'IMPORTANT_DATA', 'Destination file content must not be replaced');
+
+    // 3. REV-005: Empty upload returns 400 (never 500 ReferenceError), and real multipart upload writes file & blocks overwrite
+    const emptyUpload = await callFiles('/api/v1/files/upload', 'POST', {});
+    assert.equal(emptyUpload.code, 400);
+
+    const boundary = '----ArmGuardTestBoundary7MA4YWxkTrZu0gW';
+    const mpBody = Buffer.from(
+      `--${boundary}\r\n` +
+      `Content-Disposition: form-data; name="path"\r\n\r\n` +
+      `${workDir}\r\n` +
+      `--${boundary}\r\n` +
+      `Content-Disposition: form-data; name="file"; filename="uploaded_hello.txt"\r\n` +
+      `Content-Type: text/plain\r\n\r\n` +
+      `Hello ArmGuard Multipart!\r\n` +
+      `--${boundary}--\r\n`,
+      'utf8'
+    );
+    const upRes = await fetch(`${server.baseUrl}/api/v1/files/upload`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${authToken}`,
+        'Content-Type': `multipart/form-data; boundary=${boundary}`,
+      },
+      body: mpBody,
+    });
+    assert.equal(upRes.status, 200);
+    assert.equal(fs.readFileSync(path.join(workDir, 'uploaded_hello.txt'), 'utf8'), 'Hello ArmGuard Multipart!');
+
+    // Duplicate upload without overwrite must return 409
+    const dupUpRes = await fetch(`${server.baseUrl}/api/v1/files/upload`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${authToken}`,
+        'Content-Type': `multipart/form-data; boundary=${boundary}`,
+      },
+      body: mpBody,
+    });
+    assert.equal(dupUpRes.status, 409);
+
+    // 4. REV-011: Recursive archive containing .env must be blocked (403)
+    const siteDir = path.join(workDir, 'sample-site');
+    fs.mkdirSync(siteDir, { recursive: true });
+    fs.writeFileSync(path.join(siteDir, '.env'), 'SECRET=123', 'utf8');
+    const envArchive = await callFiles('/api/v1/files/compress', 'POST', {
+      paths: [siteDir],
+      target_name: 'site.tar.gz',
+      format: 'tar.gz',
+    });
+    assert.equal(envArchive.code, 403, 'Archiving a directory containing .env must be rejected with 403');
+    assert.equal(fs.existsSync(path.join(workDir, 'site.tar.gz')), false);
+
+    // 5. REV-001: Compressing filenames starting with '--checkpoint' must not execute checkpoint actions
+    if (process.platform !== 'win32') {
+      const untrustedDir = path.join(workDir, 'untrusted');
+      fs.mkdirSync(untrustedDir, { recursive: true });
+      const markerFile = path.join(untrustedDir, 'AUDIT_TAR_OPTION_MARKER');
+      const trickyNames = ['ordinary.txt', '--checkpoint=1', '--checkpoint-action=exec=touch AUDIT_TAR_OPTION_MARKER'];
+      for (const n of trickyNames) {
+        fs.writeFileSync(path.join(untrustedDir, n), 'SYNTHETIC', 'utf8');
+      }
+      const tarRes = await callFiles('/api/v1/files/compress', 'POST', {
+        paths: trickyNames.map((n) => path.join(untrustedDir, n)),
+        target_name: 'safe.tar.gz',
+        format: 'tar.gz',
+      });
+      assert.equal(tarRes.code, 0);
+      assert.equal(fs.existsSync(markerFile), false, 'tar option injection marker must never be created');
+    }
+
+    // 6. REV-012: Default file list without path parameter succeeds (200)
+    const listRes = await fetch(`${server.baseUrl}/api/v1/files/list`, {
+      headers: { Authorization: `Bearer ${authToken}` },
+    });
+    assert.equal(listRes.status, 200);
+    const listBody = await listRes.json();
+    assert.ok(listBody.data.current_path);
+    assert.ok(Array.isArray(listBody.data.allowed_roots));
+  } finally {
+    fs.rmSync(workDir, { recursive: true, force: true });
+  }
+});
+
+test('REV-003, REV-004, REV-007, REV-008, REV-009, REV-010, REV-013, REV-014, REV-016: Security headers, Nginx rollback, SIGTERM default, Node.js self-protection, unknown task 404, and stream GET purity', async () => {
+  const { handleSites } = await import('../routes/sites.js');
+  const { handleApps } = await import('../routes/apps.js');
+  const { handleSystem } = await import('../routes/system.js');
+  const { handleStream } = await import('../routes/stream.js');
+
+  // 1. REV-004: Security response headers on public & API routes
+  const loginPageRes = await fetch(`${server.baseUrl}/login`);
+  assert.equal(loginPageRes.headers.get('x-content-type-options'), 'nosniff');
+  assert.equal(loginPageRes.headers.get('x-frame-options'), 'DENY');
+  assert.equal(loginPageRes.headers.get('referrer-policy'), 'same-origin');
+  assert.ok(loginPageRes.headers.get('content-security-policy')?.includes("default-src 'self'"));
+
+  // 2. REV-009: Uninstalling nodejs must be blocked with 403
+  const nodeUninstallRes = await fetch(`${server.baseUrl}/api/v1/apps/nodejs/uninstall`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${authToken}`, 'Content-Type': 'application/json' },
+    body: '{}',
+  });
+  assert.equal(nodeUninstallRes.status, 403);
+
+  // 3. REV-013: Querying a non-existent install task_id must return 404 and stage=unknown
+  const badTaskRes = await fetch(`${server.baseUrl}/api/v1/apps/sqlite3/install-progress?task_id=nonexistent-task-id`, {
+    headers: { Authorization: `Bearer ${authToken}` },
+  });
+  assert.equal(badTaskRes.status, 404);
+  const badTaskBody = await badTaskRes.json();
+  assert.equal(badTaskBody.data.stage, 'unknown');
+
+  // 4. REV-008: Killing panel's own PID must be blocked with 403
+  const selfKillRes = await fetch(`${server.baseUrl}/api/v1/system/processes/${server.child.pid}/kill`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${authToken}`, 'Content-Type': 'application/json' },
+    body: '{}',
+  });
+  assert.equal(selfKillRes.status, 403);
+
+  // 5. REV-007 & REV-016: Raw Nginx config rollback and Stream GET purity
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ag-rev-nginx-'));
+  try {
+    const fakeNginxConf = path.join(tmpDir, 'nginx.conf');
+    fs.writeFileSync(fakeNginxConf, 'ORIGINAL_VALID_NGINX_CONF', 'utf8');
+
+    let rawResp;
+    const rawUrl = new URL('http://127.0.0.1/api/v1/apps/nginx/raw-config');
+    await handleApps(
+      rawUrl.pathname,
+      { method: 'PUT', headers: {} },
+      { json: (data = null, message = 'ok', code = 0) => { rawResp = { code, message, data }; } },
+      rawUrl,
+      {
+        parseBody: async () => ({ file_path: fakeNginxConf, content: 'BROKEN_DIRECTIVE_XYZ' }),
+        currentUser: () => 'opsadmin',
+        logOperation: () => {},
+        saveJSON: () => true,
+      }
+    );
+    // When nginx binary is missing or fails validation, original config must be restored!
+    if (rawResp.code !== 0) {
+      assert.equal(fs.readFileSync(fakeNginxConf, 'utf8'), 'ORIGINAL_VALID_NGINX_CONF');
+    }
+
+    // Stream GET must not modify fakeNginxConf
+    let streamResp;
+    const streamUrl = new URL('http://127.0.0.1/api/v1/stream');
+    await handleStream(
+      streamUrl.pathname,
+      { method: 'GET', headers: {} },
+      { json: (data = null, message = 'ok', code = 0) => { streamResp = { code, message, data }; } },
+      streamUrl,
+      {
+        STREAM_CONF_DIR: path.join(tmpDir, 'stream.d'),
+        NGINX_MAIN_CONF: fakeNginxConf,
+        streamRules: [],
+      }
+    );
+    assert.equal(streamResp.code, 0);
+    assert.equal(fs.readFileSync(fakeNginxConf, 'utf8'), 'ORIGINAL_VALID_NGINX_CONF');
+    assert.equal(fs.existsSync(path.join(tmpDir, 'stream.d')), false, 'GET /api/v1/stream must not create stream.d directory');
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
