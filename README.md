@@ -3,7 +3,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Architecture-ARM64%20%7C%20ARMv7%20%7C%20x86__64-00D084?style=for-the-badge&logo=arm" alt="ARM Native" />
   <img src="https://img.shields.io/badge/Memory%20Footprint-%3C%2050MB-10B981?style=for-the-badge" alt="Memory Footprint" />
-  <img src="https://img.shields.io/badge/Frontend-Vue%203%20%2B%20Vite%20%2B%20Tailwind-4FC08D?style=for-the-badge&logo=vuedotjs" alt="Vue 3" />
+  <img src="https://img.shields.io/badge/Frontend-Angular%2019%20%2B%20Material%20Design%203-DD0031?style=for-the-badge&logo=angular" alt="Angular Material M3" />
   <img src="https://img.shields.io/badge/Backend-Node.js%20%2B%20Linux%20Native-00ADD8?style=for-the-badge&logo=nodedotjs" alt="Node.js" />
   <img src="https://img.shields.io/badge/Network-IPv4%20%2B%20IPv6%20Dual--Stack-6366F1?style=for-the-badge" alt="Dual Stack" />
   <img src="https://img.shields.io/badge/License-MIT-blue?style=for-the-badge" alt="License" />
@@ -186,13 +186,15 @@ armguard/
 │   │   ├── package_release.py# 独立无依赖分发包打包脚本
 │   │   └── test_env.py       # 自动化测试环境配置加载器
 │   └── dev_server.js         # 高性能轻量级 Node.js 核心运行时
-├── frontend/                 # 前端工程 (Vue 3 + Vite + Tailwind CSS)
+├── frontend/                 # 前端工程 (Angular 19 + Angular Material / Material Design 3)
 │   ├── src/
 │   │   ├── api/              # Axios 客户端与 TypeScript 类型定义
-│   │   ├── views/            # Dashboard, Sites, Stream, SSL, Security 等视图
-│   │   ├── components/       # 硬件状态指示器, 图表, 模态弹窗与导航栏
-│   │   ├── stores/           # Pinia 全局状态存储
-│   │   └── router/           # 路由守卫与权限过滤
+│   │   ├── app/
+│   │   │   ├── core/         # Angular Signals 状态服务与 Material Design 3 模块
+│   │   │   ├── components/   # ARM 硬件诊断徽章、遥测波形图、AI 助手与 WARP 弹窗
+│   │   │   └── pages/        # Dashboard, Sites, Stream, SSL, Security 等 14 个 M3 视图
+│   │   └── utils/            # 统一请求拦截器与单次文件下载票据工具
+│   ├── angular.json          # Angular 编译器与打包配置
 │   └── package.json          # 前端依赖配置
 ├── docs/                     # 深度技术文档与开发规范
 │   ├── ARCHITECTURE.md       # 系统核心架构设计与拓扑说明

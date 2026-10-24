@@ -1,12 +1,9 @@
-import { createApp } from 'vue'
-import { createPinia } from 'pinia'
-import App from './App.vue'
-import router from './router'
-import './assets/main.css'
+import { bootstrapApplication } from '@angular/platform-browser'
+import { provideRouter } from '@angular/router'
+import { provideAnimationsAsync } from '@angular/platform-browser/animations/async'
+import { AppComponent } from './app/app.component'
+import { routes } from './app/app.routes'
 
-const app = createApp(App)
-
-app.use(createPinia())
-app.use(router)
-
-app.mount('#app')
+bootstrapApplication(AppComponent, {
+  providers: [provideRouter(routes), provideAnimationsAsync()],
+}).catch((err) => console.error(err))

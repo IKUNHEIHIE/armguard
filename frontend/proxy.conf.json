@@ -1,0 +1,17 @@
+{
+  "/api": {
+    "target": "http://127.0.0.1:8888",
+    "secure": false,
+    "changeOrigin": true
+  },
+  "/terminal/ws": {
+    "target": "ws://127.0.0.1:8888",
+    "ws": true,
+    "secure": false
+  },
+  "/system/monitor/ws": {
+    "target": "ws://127.0.0.1:8888",
+    "ws": true,
+    "secure": false
+  }
+}

@@ -40,7 +40,11 @@ desktop.ini
 # Temporary & Log Files
 *.log
 logs/
+!frontend/src/app/pages/logs/
+!frontend/src/app/pages/logs/**
 !frontend/src/views/logs/
 !frontend/src/views/logs/**
+.angular/
+frontend/.angular/
 temp/
 tmp/

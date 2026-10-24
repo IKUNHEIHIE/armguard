@@ -1,0 +1,465 @@
+@use '@angular/material' as mat;
+@import '@xterm/xterm/css/xterm.css';
+
+html {
+  color-scheme: dark;
+
+  --ag-font-display: 'Plus Jakarta Sans', 'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --ag-font-sans: 'Roboto', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --ag-font-mono: 'JetBrains Mono', 'Roboto Mono', ui-monospace, SFMono-Regular, Consolas, monospace;
+
+  /* Google M3 Dark Surface Tokens (Default) */
+  --ag-bg: #0e131a;
+  --ag-surface-lowest: #090d12;
+  --ag-surface-low: #141b24;
+  --ag-surface: #18202c;
+  --ag-surface-high: #1f2937;
+  --ag-surface-highest: #283547;
+  --ag-on-surface: #e2e8f0;
+  --ag-on-surface-variant: #94a3b8;
+  --ag-outline: #334155;
+  --ag-outline-variant: rgba(148, 163, 184, 0.16);
+
+  --ag-primary: #a8c7fa;
+  --ag-on-primary: #062e6f;
+  --ag-primary-container: #0842a0;
+  --ag-on-primary-container: #d3e3fd;
+
+  --ag-secondary-container: #1b3a5c;
+  --ag-on-secondary-container: #cfe5ff;
+
+  --ag-success: #6dd58c;
+  --ag-on-success: #0a3818;
+  --ag-success-container: rgba(109, 213, 140, 0.14);
+
+  --ag-warning: #ffbb29;
+  --ag-warning-container: rgba(255, 187, 41, 0.14);
+
+  --ag-danger: #ffb4ab;
+  --ag-danger-container: rgba(255, 180, 171, 0.14);
+
+  @include mat.theme((
+    color: (
+      theme-type: dark,
+      primary: mat.$azure-palette,
+      tertiary: mat.$cyan-palette,
+    ),
+    typography: Roboto,
+    density: 0,
+  ));
+}
+
+html.light-theme {
+  color-scheme: light;
+
+  --ag-bg: #f6f8fc;
+  --ag-surface-lowest: #ffffff;
+  --ag-surface-low: #f0f4f9;
+  --ag-surface: #e9eef6;
+  --ag-surface-high: #dde3ea;
+  --ag-surface-highest: #d3dbe5;
+  --ag-on-surface: #1f1f1f;
+  --ag-on-surface-variant: #444746;
+  --ag-outline: #747775;
+  --ag-outline-variant: rgba(68, 71, 70, 0.16);
+
+  --ag-primary: #0b57d0;
+  --ag-on-primary: #ffffff;
+  --ag-primary-container: #d3e3fd;
+  --ag-on-primary-container: #041e49;
+
+  --ag-secondary-container: #c2e7ff;
+  --ag-on-secondary-container: #001d35;
+
+  --ag-success: #146c2e;
+  --ag-on-success: #ffffff;
+  --ag-success-container: #c4eed0;
+
+  --ag-warning: #b06000;
+  --ag-warning-container: #ffdf9e;
+
+  --ag-danger: #b3261e;
+  --ag-danger-container: #f9dedc;
+
+  @include mat.theme((
+    color: (
+      theme-type: light,
+      primary: mat.$azure-palette,
+      tertiary: mat.$cyan-palette,
+    ),
+    typography: Roboto,
+    density: 0,
+  ));
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  background-color: var(--ag-bg);
+  color: var(--ag-on-surface);
+  font-family: var(--ag-font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+.font-mono,
+code,
+pre {
+  font-family: var(--ag-font-mono) !important;
+  font-variant-numeric: tabular-nums;
+}
+
+.font-display {
+  font-family: var(--ag-font-display);
+}
+
+/* Custom M3 Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--ag-outline);
+  border-radius: 999px;
+}
+
+/* ==========================================================================
+   Material Design 3 Surface & Layout Primitives
+   ========================================================================== */
+.m3-page {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding-bottom: 32px;
+  animation: m3FadeIn 180ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+@keyframes m3FadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.m3-page-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 20px 24px;
+  border-radius: 24px;
+  background: var(--ag-surface-low);
+  border: 1px solid var(--ag-outline-variant);
+
+  .m3-page-title {
+    margin: 0;
+    font-family: var(--ag-font-display);
+    font-size: 1.35rem;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    color: var(--ag-on-surface);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .m3-page-subtitle {
+    margin: 4px 0 0;
+    font-size: 0.82rem;
+    color: var(--ag-on-surface-variant);
+  }
+
+  .m3-page-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+  }
+}
+
+.m3-card {
+  background: var(--ag-surface-low) !important;
+  border: 1px solid var(--ag-outline-variant) !important;
+  border-radius: 20px !important;
+  padding: 20px;
+  color: var(--ag-on-surface);
+  box-shadow: none !important;
+  transition: border-color 150ms cubic-bezier(0.2, 0, 0, 1), background-color 150ms cubic-bezier(0.2, 0, 0, 1);
+
+  &:hover {
+    border-color: rgba(168, 199, 250, 0.28) !important;
+  }
+}
+
+.m3-tonal-card {
+  background: var(--ag-surface) !important;
+  border: 1px solid var(--ag-outline-variant) !important;
+  border-radius: 18px !important;
+  padding: 16px;
+}
+
+.m3-hero-banner {
+  background: linear-gradient(135deg, var(--ag-surface-low) 0%, var(--ag-surface) 65%, rgba(8, 66, 160, 0.25) 100%);
+  border: 1px solid var(--ag-outline-variant);
+  border-radius: 24px;
+  padding: 22px 24px;
+}
+
+.m3-grid-4 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 16px;
+}
+
+.m3-grid-3 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+  gap: 16px;
+}
+
+.m3-grid-2 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+  gap: 16px;
+}
+
+@media (max-width: 768px) {
+  .m3-grid-2,
+  .m3-grid-3,
+  .m3-grid-4 {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Status Pills (M3 Tonal Chips) */
+.m3-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  font-family: var(--ag-font-mono);
+  line-height: 1.4;
+  border: 1px solid transparent;
+
+  &.primary {
+    background: var(--ag-primary-container);
+    color: var(--ag-on-primary-container);
+  }
+  &.success {
+    background: var(--ag-success-container);
+    color: var(--ag-success);
+    border-color: rgba(109, 213, 140, 0.25);
+  }
+  &.warning {
+    background: var(--ag-warning-container);
+    color: var(--ag-warning);
+    border-color: rgba(255, 187, 41, 0.25);
+  }
+  &.danger {
+    background: var(--ag-danger-container);
+    color: var(--ag-danger);
+    border-color: rgba(255, 180, 171, 0.25);
+  }
+  &.neutral {
+    background: var(--ag-surface-high);
+    color: var(--ag-on-surface-variant);
+    border-color: var(--ag-outline-variant);
+  }
+}
+
+/* M3 Data Table */
+.m3-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  border-radius: 16px;
+  border: 1px solid var(--ag-outline-variant);
+  background: var(--ag-surface-lowest);
+}
+
+table.m3-data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+
+  th {
+    text-align: left;
+    padding: 12px 16px;
+    background: var(--ag-surface);
+    color: var(--ag-on-surface-variant);
+    font-weight: 600;
+    font-size: 0.75rem;
+    letter-spacing: 0.02em;
+    border-bottom: 1px solid var(--ag-outline-variant);
+    white-space: nowrap;
+  }
+
+  td {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--ag-outline-variant);
+    color: var(--ag-on-surface);
+    vertical-align: middle;
+  }
+
+  tbody tr:last-child td {
+    border-bottom: none;
+  }
+
+  tbody tr:hover {
+    background: rgba(168, 199, 250, 0.05);
+  }
+}
+
+/* M3 Form Controls & Native Inputs inside M3 cards */
+.m3-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+
+  label {
+    font-size: 0.78rem;
+    font-weight: 500;
+    color: var(--ag-on-surface-variant);
+  }
+
+  input:not([type='checkbox']):not([type='radio']):not([type='range']),
+  select,
+  textarea {
+    width: 100%;
+    padding: 10px 14px;
+    border-radius: 12px;
+    border: 1px solid var(--ag-outline);
+    background: var(--ag-surface-lowest);
+    color: var(--ag-on-surface);
+    font-family: inherit;
+    font-size: 0.85rem;
+    transition: border-color 150ms, box-shadow 150ms;
+
+    &:focus {
+      outline: none;
+      border-color: var(--ag-primary);
+      box-shadow: 0 0 0 2px rgba(168, 199, 250, 0.2);
+    }
+
+    &:disabled,
+    &[readonly] {
+      opacity: 0.65;
+    }
+  }
+
+  .m3-hint {
+    font-size: 0.72rem;
+    color: var(--ag-on-surface-variant);
+  }
+}
+
+/* M3 Modal Overlay */
+.m3-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(5, 8, 14, 0.72);
+  backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  animation: m3FadeIn 150ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.m3-modal-dialog {
+  width: 100%;
+  max-width: 680px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--ag-surface-low);
+  border: 1px solid var(--ag-outline-variant);
+  border-radius: 28px;
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+
+  &.lg {
+    max-width: 880px;
+  }
+  &.xl {
+    max-width: 1060px;
+  }
+
+  .m3-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 20px 24px 16px;
+    border-bottom: 1px solid var(--ag-outline-variant);
+
+    h3 {
+      margin: 0;
+      font-family: var(--ag-font-display);
+      font-size: 1.1rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+  }
+
+  .m3-modal-body {
+    padding: 20px 24px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .m3-modal-footer {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 10px;
+    padding: 16px 24px;
+    border-top: 1px solid var(--ag-outline-variant);
+    background: var(--ag-surface);
+  }
+}
+
+.m3-code-console {
+  background: #090d14;
+  color: #e2e8f0;
+  border: 1px solid var(--ag-outline-variant);
+  border-radius: 16px;
+  padding: 14px 16px;
+  font-family: var(--ag-font-mono);
+  font-size: 0.78rem;
+  line-height: 1.55;
+  overflow: auto;
+  max-height: 440px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.m3-empty-state {
+  padding: 40px 24px;
+  text-align: center;
+  color: var(--ag-on-surface-variant);
+  background: var(--ag-surface-lowest);
+  border: 1px dashed var(--ag-outline);
+  border-radius: 18px;
+  font-size: 0.85rem;
+}

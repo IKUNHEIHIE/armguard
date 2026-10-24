@@ -108,14 +108,14 @@ after(async () => {
   }
 });
 
-test('AG-001 & AG-002: LogsView.vue is tracked/present and ws is declared in package.json', () => {
-  const logsViewPath = path.join(repoRoot, 'frontend', 'src', 'views', 'logs', 'LogsView.vue');
-  assert.equal(fs.existsSync(logsViewPath), true, 'LogsView.vue must exist');
-  const checkIgnore = spawnSync('git', ['check-ignore', 'frontend/src/views/logs/LogsView.vue'], {
+test('AG-001 & AG-002: Logs page source is tracked/present and ws is declared in package.json', () => {
+  const logsViewPath = path.join(repoRoot, 'frontend', 'src', 'app', 'pages', 'logs', 'logs.component.ts');
+  assert.equal(fs.existsSync(logsViewPath), true, 'logs.component.ts must exist');
+  const checkIgnore = spawnSync('git', ['check-ignore', 'frontend/src/app/pages/logs/logs.component.ts'], {
     cwd: repoRoot,
     encoding: 'utf8',
   });
-  assert.notEqual(checkIgnore.status, 0, 'frontend/src/views/logs/LogsView.vue must not be ignored by .gitignore');
+  assert.notEqual(checkIgnore.status, 0, 'frontend/src/app/pages/logs/logs.component.ts must not be ignored by .gitignore');
 
   const pkg = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
   assert.ok(pkg.dependencies && pkg.dependencies.ws, 'package.json must declare ws in dependencies');
