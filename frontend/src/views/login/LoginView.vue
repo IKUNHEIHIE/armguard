@@ -50,7 +50,7 @@
                 :type="showPassword ? 'text' : 'password'"
                 required
                 autocomplete="current-password"
-                placeholder="请输入密码 (默认 armguard)"
+                placeholder="请输入管理员密码"
                 class="w-full bg-slate-900/90 border border-slate-700 rounded-xl px-4 py-2.5 pl-10 pr-10 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 transition"
               />
               <Lock class="w-4 h-4 text-slate-500 absolute left-3.5 top-3" />

@@ -119,10 +119,10 @@ sudo bash install.sh
 ```
 
 安装脚本会自动：
-1. 检查并安装核心运行时环境（Node.js、Nginx、Certbot）；
-2. 部署面板核心文件至 `/opt/armguard`；
-3. 创建持久化数据目录 `/var/lib/armguard` 与日志目录 `/var/log/armguard`；
-4. 注册并启动 `armguard.service` 系统服务。
+1. 校验宿主机架构（`aarch64` / `armv7l` / `x86_64`）与 Node.js（`>= 20`）运行时；
+2. 部署面板后端、前端构建产物（`dist/`）与依赖包（`node_modules/`）至 `/opt/armguard`；
+3. 创建权限受限的持久化数据目录 `/var/lib/armguard`（`0700`）与备份目录 `/var/lib/armguard/backups`（升级时完整保留既有配置与管理员凭证）；
+4. 注册、启动并执行 `armguard.service` HTTP/HTTPS 本地健康检查。
 
 ### 方式二：源码编译与本地开发
 
@@ -131,8 +131,9 @@ sudo bash install.sh
 git clone https://github.com/IKUNHEIHIE/armguard.git
 cd armguard
 
-# 2. 安装前端依赖并构建
-npm --prefix frontend install
+# 2. 安装后端与前端依赖并构建前端产物
+npm ci
+npm --prefix frontend ci
 npm --prefix frontend run build
 
 # 3. 启动后端服务
@@ -141,11 +142,22 @@ npm start
 
 ---
 
-## 🌐 5. 默认访问凭证
+## 🌐 5. 首次访问与管理员凭证安全策略
 
-- **访问地址**：`http://<您的服务器IP>:8888`
-- **默认账号**：`admin`
-- **默认密码**：`armguard`（初次登录后建议立即在「设置」中修改）
+- **默认访问地址**：`http://<您的服务器IP>:8888/armguard`（含默认安全入口 `/armguard`）
+- **默认管理员账号**：`admin`
+- **首次随机初始密码**：
+  - 为杜绝公网弱口令风险，ArmGuard **不再使用固定默认密码**，也不会向 `journalctl` 标准输出打印明文密码。
+  - 首次初始化时，系统会自动生成高强度随机密码并写入受保护文件 `/var/lib/armguard/initial_admin_password`（权限 `0600`）。
+  - 请在服务器终端通过 root 权限查看初始密码并在首次登录后前往「面板设置 -> 管理员与凭证」修改密码：
+    ```bash
+    sudo cat /var/lib/armguard/initial_admin_password
+    ```
+- **应急密码重置**：
+  - 若遗忘管理员密码，可在服务器本地执行应急重置工具生成新密码（或指定新密码）：
+    ```bash
+    sudo node /opt/armguard/backend/scripts/reset_admin.js
+    ```
 
 ---
 

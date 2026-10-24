@@ -131,17 +131,25 @@ export async function handleDatabases(pathname, req, res, url, ctx) {
         try {
           const charset = body.character_set || 'utf8mb4'
           const cli = getDbCli()
-          spawnSync(cli, ['-e', `CREATE DATABASE IF NOT EXISTS \`${safeDbName}\` CHARACTER SET ${charset};`], { encoding: 'utf-8' })
+          const createRes = spawnSync(cli, ['-e', `CREATE DATABASE IF NOT EXISTS \`${safeDbName}\` CHARACTER SET ${charset};`], { encoding: 'utf-8', timeout: 15000 })
+          if (createRes.error || createRes.status !== 0) {
+            throw new Error(createRes.error ? createRes.error.message : ((createRes.stderr || '').trim() || `退出码 ${createRes.status}`))
+          }
           if (body.username && body.password) {
             const safeUser = (body.username || '').replace(/[^a-zA-Z0-9_]/g, '')
             const safePass = String(body.password || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\0/g, '')
             if (safeUser) {
               const grantSql = `CREATE USER IF NOT EXISTS '${safeUser}'@'localhost' IDENTIFIED BY '${safePass}'; GRANT ALL PRIVILEGES ON \`${safeDbName}\`.* TO '${safeUser}'@'localhost'; FLUSH PRIVILEGES;`
-              spawnSync(cli, ['-e', grantSql], { encoding: 'utf-8' })
+              const grantRes = spawnSync(cli, ['-e', grantSql], { encoding: 'utf-8', timeout: 15000 })
+              if (grantRes.error || grantRes.status !== 0) {
+                throw new Error(grantRes.error ? grantRes.error.message : ((grantRes.stderr || '').trim() || `授权退出码 ${grantRes.status}`))
+              }
             }
           }
         } catch (e) {
           console.error('MySQL database creation error:', e)
+          res.json(null, `创建数据库失败: ${e.message}`, 500)
+          return true
         }
       } else {
         const dbPath = path.join(ctx.DATA_DIR, `${safeDbName}.db`)
@@ -162,7 +170,7 @@ export async function handleDatabases(pathname, req, res, url, ctx) {
       }
       ctx.databases.unshift(newDb)
       ctx.saveJSON(ctx.DATABASES_FILE, ctx.databases)
-      ctx.logOperation('admin', '新建数据库', newDb.db_name)
+      ctx.logOperation(ctx.currentUser(), '新建数据库', newDb.db_name)
       res.json(newDb, '数据库创建成功')
       return true
     }
@@ -192,7 +200,7 @@ export async function handleDatabases(pathname, req, res, url, ctx) {
     }
     ctx.databases.splice(idx, 1)
     ctx.saveJSON(ctx.DATABASES_FILE, ctx.databases)
-    ctx.logOperation('admin', '删除数据库', target.db_name)
+    ctx.logOperation(ctx.currentUser(), '删除数据库', target.db_name)
     res.json(null, `数据库 [${target.db_name}] 已成功删除`)
     return true
   }
@@ -271,7 +279,7 @@ export async function handleDatabases(pathname, req, res, url, ctx) {
           fs.writeFileSync(backupFile, gzipped)
           if (target) target.backup_count++
           ctx.saveJSON(ctx.DATABASES_FILE, ctx.databases)
-          ctx.logOperation('admin', '备份 MySQL 数据库', cleanName)
+          ctx.logOperation(ctx.currentUser(), '备份 MySQL 数据库', cleanName)
           res.json({ backup_id: Date.now(), file_name: path.basename(backupFile) }, '备份成功')
         } catch (e) {
           res.json(null, e.message, 500)
@@ -291,7 +299,7 @@ export async function handleDatabases(pathname, req, res, url, ctx) {
         fs.writeFileSync(backupFile, gzipped)
         if (target) target.backup_count++
         ctx.saveJSON(ctx.DATABASES_FILE, ctx.databases)
-        ctx.logOperation('admin', '备份 SQLite 数据库', safeDbName)
+        ctx.logOperation(ctx.currentUser(), '备份 SQLite 数据库', safeDbName)
         res.json({ backup_id: Date.now(), file_name: path.basename(backupFile) }, '备份成功')
       } catch (e) {
         res.json(null, e.message, 500)
@@ -347,14 +355,17 @@ export async function handleDatabases(pathname, req, res, url, ctx) {
       res.writeHead(200, {
         'Content-Type': 'application/gzip',
         'Content-Disposition': `attachment; filename="${fileName}"`,
-        'Content-Length': stat.size
+        'Content-Length': stat.size,
+        'Cache-Control': 'no-store'
       })
       if (req.method === 'HEAD') {
         res.end()
         return true
       }
-      fs.createReadStream(filePath).pipe(res)
-      ctx.logOperation('admin', '下载数据库备份', fileName)
+      const stream = fs.createReadStream(filePath)
+      stream.on('error', () => res.destroy())
+      stream.pipe(res)
+      ctx.logOperation(ctx.currentUser(), '下载数据库备份', fileName)
       return true
     } catch (e) {
       res.json(null, e.message, 500)
@@ -373,7 +384,7 @@ export async function handleDatabases(pathname, req, res, url, ctx) {
     if (fs.existsSync(filePath)) {
       try { fs.unlinkSync(filePath) } catch {}
     }
-    ctx.logOperation('admin', '删除数据库备份', fileName)
+    ctx.logOperation(ctx.currentUser(), '删除数据库备份', fileName)
     res.json(null, '备份文件已删除')
     return true
   }

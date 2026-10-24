@@ -116,7 +116,7 @@ export async function handleSSL(pathname, req, res, url, ctx) {
       }
       ctx.sslCerts.unshift(newCert)
       ctx.saveJSON(ctx.CERTS_FILE, ctx.sslCerts)
-      ctx.logOperation('admin', '申请/导入 SSL 证书', body.domain)
+      ctx.logOperation(ctx.currentUser(), '申请/导入 SSL 证书', body.domain)
       res.json(newCert, '证书配置成功')
       return true
     }
@@ -171,7 +171,7 @@ export async function handleSSL(pathname, req, res, url, ctx) {
         ctx.saveJSON(ctx.CERTS_FILE, ctx.sslCerts)
       }
     }
-    ctx.logOperation('admin', '上传 SSL 证书', body.domain)
+    ctx.logOperation(ctx.currentUser(), '上传 SSL 证书', body.domain)
     res.json({ cert_id: newCert.id }, '证书上传成功并已持久化保存')
     return true
   }
@@ -202,11 +202,14 @@ export async function handleSSL(pathname, req, res, url, ctx) {
     if (provider === 'self_signed') {
       // Local self-signed test cert
       try {
-        spawnSync('openssl', [
+        const ossl = spawnSync('openssl', [
           'req', '-x509', '-nodes', '-days', '90', '-newkey', 'rsa:2048',
           '-keyout', keyPath, '-out', certPath,
           '-subj', `/CN=${domain}`
-        ], { encoding: 'utf-8' })
+        ], { encoding: 'utf-8', timeout: 15000 })
+        if (ossl.error || ossl.status !== 0) {
+          throw new Error(ossl.error ? ossl.error.message : ((ossl.stderr || '').trim() || `openssl 退出码 ${ossl.status}`))
+        }
       } catch (e) {
         res.json(null, `生成自签名证书失败: ${e.message}`, 500)
         return true
@@ -309,7 +312,7 @@ export async function handleSSL(pathname, req, res, url, ctx) {
       }
     }
 
-    ctx.logOperation('admin', '在线申请/换发 SSL 证书', domain)
+    ctx.logOperation(ctx.currentUser(), '在线申请/换发 SSL 证书', domain)
     res.json(newCert, `Let's Encrypt 证书申请成功！颁发者: ${newCert.issuer}，有效期至: ${newCert.expires_at}`)
     return true
   }
@@ -399,11 +402,14 @@ export async function handleSSL(pathname, req, res, url, ctx) {
     if (cert.issuer.includes('Self-Signed') || cert.issuer.includes('自签名')) {
       // Re-sign self-signed
       try {
-        spawnSync('openssl', [
+        const ossl = spawnSync('openssl', [
           'req', '-x509', '-nodes', '-days', '90', '-newkey', 'rsa:2048',
           '-keyout', keyPath, '-out', certPath,
           '-subj', `/CN=${cert.domain}`
-        ], { encoding: 'utf-8' })
+        ], { encoding: 'utf-8', timeout: 15000 })
+        if (ossl.error || ossl.status !== 0) {
+          throw new Error(ossl.error ? ossl.error.message : ((ossl.stderr || '').trim() || `openssl 退出码 ${ossl.status}`))
+        }
       } catch (e) {
         res.json(null, `自签名证书续期失败: ${e.message}`, 500)
         return true
@@ -439,7 +445,7 @@ export async function handleSSL(pathname, req, res, url, ctx) {
     }
     ctx.saveJSON(ctx.CERTS_FILE, ctx.sslCerts)
     try { execSync('systemctl reload nginx 2>/dev/null || true') } catch {}
-    ctx.logOperation('admin', '续期 SSL 证书', cert.domain)
+    ctx.logOperation(ctx.currentUser(), '续期 SSL 证书', cert.domain)
     res.json({ success: true, new_expires_at: cert.expires_at, days_remaining: cert.days_remaining }, '证书续签成功')
     return true
   }
@@ -484,7 +490,7 @@ export async function handleSSL(pathname, req, res, url, ctx) {
     }
     ctx.saveJSON(ctx.SITES_FILE, ctx.sites)
     ctx.saveJSON(ctx.CERTS_FILE, ctx.sslCerts)
-    ctx.logOperation('admin', '部署 SSL 证书到站点', `${cert.domain} -> ${site.domain}`)
+    ctx.logOperation(ctx.currentUser(), '部署 SSL 证书到站点', `${cert.domain} -> ${site.domain}`)
     res.json(null, `证书已成功部署至站点 [${site.domain}] 并生效！`)
     return true
   }
@@ -505,7 +511,7 @@ export async function handleSSL(pathname, req, res, url, ctx) {
     }
     ctx.sslCerts.splice(idx, 1)
     ctx.saveJSON(ctx.CERTS_FILE, ctx.sslCerts)
-    ctx.logOperation('admin', '删除 SSL 证书', cert.domain)
+    ctx.logOperation(ctx.currentUser(), '删除 SSL 证书', cert.domain)
     res.json(null, `证书 [${cert.domain}] 已成功删除`)
     return true
   }

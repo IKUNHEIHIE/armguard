@@ -346,10 +346,10 @@ function executeMockCommand(cmd: string) {
 function connectWebSocket() {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
   const token = localStorage.getItem('armguard_token') || ''
-  const url = `${protocol}//${window.location.host}/terminal/ws?token=${token}`
+  const url = `${protocol}//${window.location.host}/terminal/ws`
 
   try {
-    ws = new WebSocket(url)
+    ws = new WebSocket(url, token ? ['armguard.v1', token] : ['armguard.v1'])
     ws.onopen = () => {
       connected.value = true
       if (term) {

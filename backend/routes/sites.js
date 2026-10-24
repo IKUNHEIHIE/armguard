@@ -179,7 +179,7 @@ export async function handleSites(pathname, req, res, url, ctx) {
 
       ctx.sites.unshift(newSite)
       ctx.saveJSON(ctx.SITES_FILE, ctx.sites)
-      ctx.logOperation('admin', '创建虚拟主机', body.domain)
+      ctx.logOperation(ctx.currentUser(), '创建虚拟主机', body.domain)
       res.json(newSite, '站点创建成功')
       return true
     }
@@ -199,7 +199,7 @@ export async function handleSites(pathname, req, res, url, ctx) {
       try { execSync('nginx -t && systemctl reload nginx 2>/dev/null || true') } catch {}
       ctx.sites = ctx.sites.filter(s => s.id !== id)
       ctx.saveJSON(ctx.SITES_FILE, ctx.sites)
-      ctx.logOperation('admin', '删除虚拟主机', `${target.domain}${deleteFiles ? ' (同时删除网站文件)' : ''}`)
+      ctx.logOperation(ctx.currentUser(), '删除虚拟主机', `${target.domain}${deleteFiles ? ' (同时删除网站文件)' : ''}`)
     }
     res.json(null, '站点删除成功')
     return true
@@ -242,7 +242,7 @@ export async function handleSites(pathname, req, res, url, ctx) {
     execSync('systemctl reload nginx 2>/dev/null || true')
 
     ctx.saveJSON(ctx.SITES_FILE, ctx.sites)
-    ctx.logOperation('admin', '更新站点高级设置', target.domain)
+    ctx.logOperation(ctx.currentUser(), '更新站点高级设置', target.domain)
     res.json(target, '站点设置已保存并重载生效')
     return true
   }
@@ -258,7 +258,7 @@ export async function handleSites(pathname, req, res, url, ctx) {
       fs.writeFileSync(path.join(ctx.NGINX_CONF_DIR, `${target.domain}.conf`), confContent, 'utf8')
       try { execSync('nginx -t && systemctl reload nginx 2>/dev/null || true') } catch {}
       ctx.saveJSON(ctx.SITES_FILE, ctx.sites)
-      ctx.logOperation('admin', `${target.status === 'running' ? '启用' : '暂停'}站点`, target.domain)
+      ctx.logOperation(ctx.currentUser(), `${target.status === 'running' ? '启用' : '暂停'}站点`, target.domain)
       res.json({ status: target.status }, `站点已${target.status === 'running' ? '启用' : '暂停'}`)
       return true
     }
@@ -276,7 +276,7 @@ export async function handleSites(pathname, req, res, url, ctx) {
 
     if (req.method === 'DELETE') {
       try { fs.writeFileSync(logFile, '', 'utf8') } catch {}
-      ctx.logOperation('admin', `清空站点日志 [${logType}]`, target?.domain)
+      ctx.logOperation(ctx.currentUser(), `清空站点日志 [${logType}]`, target?.domain)
       res.json(null, '日志已成功清空')
       return true
     }
@@ -314,7 +314,7 @@ export async function handleSites(pathname, req, res, url, ctx) {
         return true
       }
       try { spawnSync('systemctl', ['reload', 'nginx']) } catch {}
-      ctx.logOperation('admin', '更新 Nginx 配置文件', target?.domain)
+      ctx.logOperation(ctx.currentUser(), '更新 Nginx 配置文件', target?.domain)
       res.json(null, '配置保存并重载成功')
       return true
     }
@@ -390,7 +390,7 @@ export async function handleSites(pathname, req, res, url, ctx) {
         }
         execSync('systemctl reload nginx 2>/dev/null || true')
         ctx.saveJSON(ctx.SITES_FILE, ctx.sites)
-        ctx.logOperation('admin', '配置站点 SSL 证书', target.domain)
+        ctx.logOperation(ctx.currentUser(), '配置站点 SSL 证书', target.domain)
         res.json(null, 'SSL 证书已成功部署并生效！')
         return true
       } catch (err) {

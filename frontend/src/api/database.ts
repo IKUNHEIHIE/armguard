@@ -49,7 +49,7 @@ export const databaseApi = {
   getBackups: (id: number) => apiClient.get<ApiResponse<{ list: BackupRecord[] }>>(`/databases/${id}/backups`),
   restoreBackup: (id: number, backupId: number) => apiClient.post<ApiResponse<void>>(`/databases/${id}/restore`, { backup_id: backupId }),
   executeQuery: (id: number, sql: string) => apiClient.post<ApiResponse<{ columns: string[]; rows: any[][]; rows_affected: number; execution_time_ms: number }>>(`/databases/${id}/query`, { sql }),
-  downloadBackupUrl: (fileName: string) => `/api/v1/databases/backup/download?file_name=${encodeURIComponent(fileName)}&token=${localStorage.getItem('armguard_token') || ''}`,
+  downloadBackupPath: (fileName: string) => `/api/v1/databases/backup/download?file_name=${encodeURIComponent(fileName)}`,
   deleteBackup: (fileName: string) => apiClient.delete<ApiResponse<void>>('/databases/backup', { params: { file_name: fileName } }),
 }
 

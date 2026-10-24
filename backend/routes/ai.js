@@ -1,7 +1,18 @@
 import http from 'http'
 import https from 'https'
 import os from 'os'
-import { getRealMemStats, getRealDiskStats, getRealCPUPercent, getRealProcesses } from './system.js'
+import { getRealMemStats, getRealDiskStats, getRealCPUPercent, getRealProcesses, getHostIdentity, getThermal } from './system.js'
+
+// Null-safe formatting: unknown metrics are reported as unknown, never invented
+const fx = (v, d = 1) => (Number.isFinite(v) ? v.toFixed(d) : '未知')
+const gb = (v) => (Number.isFinite(v) ? (v / (1024 * 1024 * 1024)).toFixed(1) : '?')
+const distroText = () => `${getHostIdentity().distribution || '未知发行版'} (${os.arch()})`
+function thermalText() {
+  const t = getThermal()
+  const temp = Number.isFinite(t.temp_c) ? `${t.temp_c.toFixed(1)}°C` : '温度传感器不可用'
+  const flags = t.throttle_source ? `，降频: ${t.throttled ? '是' : '否'}，欠压: ${t.under_voltage ? '是' : '否'}` : ''
+  return `${temp}${flags}`
+}
 
 export const DEFAULT_AI_CONFIG = {
   enabled: true,
@@ -99,12 +110,12 @@ export function getSystemContextPrompt(ctx = null) {
   const procs = getRealProcesses('cpu', 5)
   const siteCount = ctx?.sites ? ctx.sites.length : 0
   return `【当前服务器实时环境上下文】
-- 操作系统: Ubuntu 24.04 ARM64 (Linux aarch64)
-- CPU 核心: ${os.cpus().length} 核心 (${os.cpus()[0]?.model || 'ARM64 Cortex-A72 / Ampere Altra'})
-- CPU 当前使用率: ${cpuP.toFixed(1)}%
-- 物理内存: 总共 ${(mem.total / (1024*1024*1024)).toFixed(1)}GB, 已用 ${(mem.used / (1024*1024*1024)).toFixed(1)}GB (${mem.percent.toFixed(1)}%)
-- 主磁盘: 总共 ${(disk.total / (1024*1024*1024)).toFixed(1)}GB, 已用 ${(disk.used / (1024*1024*1024)).toFixed(1)}GB (${disk.percent.toFixed(1)}%)
-- 核心温度: 38.5°C (正常)
+- 操作系统: ${distroText()}
+- CPU 核心: ${os.cpus().length} 核心 (${getHostIdentity().cpu_model || '未知型号'})
+- CPU 当前使用率: ${fx(cpuP)}%
+- 物理内存: 总共 ${gb(mem.total)}GB, 已用 ${gb(mem.used)}GB (${fx(mem.percent)}%)
+- 主磁盘: 总共 ${gb(disk.total)}GB, 已用 ${gb(disk.used)}GB (${fx(disk.percent)}%)
+- 核心温度: ${thermalText()}
 - 活跃虚拟主机: ${siteCount} 个站点
 - Top 占用进程: ${procs.map(p => `${p.name}(CPU ${p.cpu_percent}%, MEM ${p.mem_percent}%)`).join(', ')}
 【AI 角色设定】你是一个专业的 Linux & ARM64 系统运维架构师与专家助手，请基于上述真实的 ARM64 Linux 生产环境回答，输出准确、安全、高效的命令与建议。`
@@ -128,7 +139,7 @@ export async function handleAI(pathname, req, res, url, ctx) {
       const body = await ctx.parseBody(req, res)
       Object.assign(ctx.aiConfig, body)
       ctx.saveJSON(ctx.AI_CONFIG_FILE, ctx.aiConfig)
-      ctx.logOperation('admin', '更新 AI 大模型配置', ctx.aiConfig.model || 'OpenAI 兼容接口')
+      ctx.logOperation(ctx.currentUser(), '更新 AI 大模型配置', ctx.aiConfig.model || 'OpenAI 兼容接口')
       const configured = isAiConfigured(ctx.aiConfig)
       res.json({
         ...ctx.aiConfig,
@@ -194,11 +205,11 @@ export async function handleAI(pathname, req, res, url, ctx) {
         const disk = getRealDiskStats()
         const cpuP = getRealCPUPercent()
         if (userMessage.includes('状态') || userMessage.includes('负载') || userMessage.includes('体检')) {
-          reply = `🔍 **ArmGuard 服务器状态实时速报**\n- **CPU 使用率**: ${cpuP.toFixed(1)}% (正常)\n- **内存占用**: ${(mem.used / (1024*1024*1024)).toFixed(1)}GB / ${(mem.total / (1024*1024*1024)).toFixed(1)}GB (${mem.percent.toFixed(1)}%)\n- **磁盘剩余**: ${(disk.free / (1024*1024*1024)).toFixed(1)}GB 可用\n- **ARM 温度**: 38.5°C (低温安全)\n\n*(提示：可在「系统设置-管理员与凭证」中配置 DeepSeek / OpenAI API Key，解锁完整大模型深度对话与排障能力)*`
+          reply = `🔍 **ArmGuard 服务器状态实时速报**\n- **CPU 使用率**: ${fx(cpuP)}% (正常)\n- **内存占用**: ${gb(mem.used)}GB / ${gb(mem.total)}GB (${fx(mem.percent)}%)\n- **磁盘剩余**: ${gb(disk.free)}GB 可用\n- **ARM 温度**: ${thermalText()}\n\n*(提示：可在「系统设置-管理员与凭证」中配置 DeepSeek / OpenAI API Key，解锁完整大模型深度对话与排障能力)*`
         } else if (userMessage.includes('内存') || userMessage.includes('RAM')) {
-          reply = `📊 **内存健康分析**\n当前物理内存已用 ${mem.percent.toFixed(1)}% (${(mem.used / (1024*1024*1024)).toFixed(1)}GB)。系统运行平稳，无 OOM 异常。若需释放缓存，可前往「系统设置」点击“清空运行缓存”。`
+          reply = `📊 **内存健康分析**\n当前物理内存已用 ${fx(mem.percent)}% (${gb(mem.used)}GB)。系统运行平稳，无 OOM 异常。若需释放缓存，可前往「系统设置」点击“清空运行缓存”。`
         } else {
-          reply = `🤖 **ArmGuard 智能运维助手**\n我已经感知到您当前运行在 **Ubuntu 24.04 ARM64** 系统上。关于您的提问：“${userMessage}”，建议在「系统设置-管理员与凭证」配置您的 DeepSeek / OpenAI API Key，以获得由大模型驱动的深度全自动化运维方案。`
+          reply = `🤖 **ArmGuard 智能运维助手**\n我已经感知到您当前运行在 **${distroText()}** 系统上。关于您的提问：“${userMessage}”，建议在「系统设置-管理员与凭证」配置您的 DeepSeek / OpenAI API Key，以获得由大模型驱动的深度全自动化运维方案。`
         }
       }
       res.json({ reply })
@@ -372,7 +383,7 @@ export async function handleAI(pathname, req, res, url, ctx) {
       cpu_percent: cpuP,
       memory_percent: mem.percent,
       disk_percent: disk.percent,
-      temp_c: 38.5,
+      temp_c: getThermal().temp_c,
       load_avg: os.loadavg(),
       active_sites: siteCount,
       top_procs: procs.slice(0, 5)
@@ -424,10 +435,10 @@ export async function handleAI(pathname, req, res, url, ctx) {
           level: score >= 90 ? 'healthy' : (score >= 70 ? 'warning' : 'critical'),
           summary: '服务器整体运行状态优良，ARM 核心温度与电源电压平稳，内存与磁盘充裕',
           checks: [
-            { item: 'CPU 负载与核心调度', status: cpuP < 70 ? 'pass' : 'warning', detail: `当前利用率 ${cpuP.toFixed(1)}%，调度策略 performance，低开销平稳` },
-            { item: 'RAM 物理内存利用率', status: mem.percent < 80 ? 'pass' : 'warning', detail: `已用 ${(mem.used/(1024*1024*1024)).toFixed(1)}GB / ${(mem.total/(1024*1024*1024)).toFixed(1)}GB (${mem.percent.toFixed(1)}%)` },
-            { item: '磁盘存储容量', status: disk.percent < 85 ? 'pass' : 'warning', detail: `主分区已用 ${disk.percent.toFixed(1)}%，剩余可用 ${(disk.free/(1024*1024*1024)).toFixed(1)}GB` },
-            { item: 'ARM 核心温度与电压', status: 'pass', detail: '核心温度 38.5°C，无降频，无欠压异常' },
+            { item: 'CPU 负载与核心调度', status: cpuP < 70 ? 'pass' : 'warning', detail: `当前利用率 ${fx(cpuP)}%，调度策略 ${getThermal().governor || '未知'}` },
+            { item: 'RAM 物理内存利用率', status: mem.percent < 80 ? 'pass' : 'warning', detail: `已用 ${gb(mem.used)}GB / ${gb(mem.total)}GB (${fx(mem.percent)}%)` },
+            { item: '磁盘存储容量', status: disk.percent < 85 ? 'pass' : 'warning', detail: `主分区已用 ${fx(disk.percent)}%，剩余可用 ${gb(disk.free)}GB` },
+            { item: 'ARM 核心温度与电压', status: (() => { const t = getThermal(); if (t.temp_c === null) return 'unknown'; return (t.temp_c >= 70 || t.throttled || t.under_voltage) ? 'warning' : 'pass' })(), detail: `核心温度 ${thermalText()}` },
             { item: 'Web 与数据库服务', status: 'pass', detail: `已托管 ${siteCount} 个虚拟主机，Nginx 守护进程健康运行` }
           ],
           optimizations: [

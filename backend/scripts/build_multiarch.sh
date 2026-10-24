@@ -1,33 +1,24 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# ArmGuard Cross-Compilation Script
-# Builds single binary packages for linux/arm64, linux/armv7, and linux/amd64
+# ArmGuard Release Build Script
+# Builds the Vue 3 frontend assets, bundles Node.js runtime dependencies,
+# and creates the portable Linux release archives (.tar.gz / .zip) for
+# aarch64 (ARM64), armv7l (ARM32), and x86_64 (AMD64).
 # ==============================================================================
 
-set -e
+set -euo pipefail
 
-VERSION="v0.1.0-alpha"
-OUT_DIR="./dist_bin"
-mkdir -p ${OUT_DIR}
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
-echo "Building Frontend Assets..."
-cd ../frontend
-npm run build
-cd ../backend
+echo "[1/3] Installing production backend dependencies..."
+(cd "${ROOT_DIR}" && npm ci --omit=dev)
 
-echo "Building Go Binaries for ARM and x86..."
+echo "[2/3] Building frontend production bundle..."
+(cd "${ROOT_DIR}/frontend" && npm ci && npm run build)
 
-# 1. Linux ARM64 (aarch64 - Raspberry Pi 4/5, OrangePi 5, Alibaba Yitian, AWS Graviton)
-echo "Compiling linux/arm64..."
-CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o ${OUT_DIR}/armguard-linux-arm64 ./cmd/server
+echo "[3/3] Packaging standalone distribution archives..."
+python3 "${SCRIPT_DIR}/package_release.py"
 
-# 2. Linux ARMv7 (armv7l - Raspberry Pi 2/3 32-bit, OrangePi Zero)
-echo "Compiling linux/armv7..."
-CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -ldflags="-s -w" -o ${OUT_DIR}/armguard-linux-armv7 ./cmd/server
-
-# 3. Linux AMD64 (x86_64)
-echo "Compiling linux/amd64..."
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o ${OUT_DIR}/armguard-linux-amd64 ./cmd/server
-
-echo "✓ All binaries built successfully in ${OUT_DIR}:"
-ls -lh ${OUT_DIR}
+echo "✓ Release archives built in ${ROOT_DIR}/release:"
+ls -lh "${ROOT_DIR}/release"

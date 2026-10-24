@@ -145,7 +145,7 @@ export async function handleSecurity(pathname, req, res, url, ctx) {
           } else {
             spawnSync('iptables', ['-I', 'INPUT', '1', '-s', srcIp, '-m', 'comment', '--comment', desc, '-j', 'DROP'])
           }
-          ctx.logOperation('admin', '添加防火墙 IP 拦截黑名单', srcIp)
+          ctx.logOperation(ctx.currentUser(), '添加防火墙 IP 拦截黑名单', srcIp)
           res.json(null, `IP [${srcIp}] 已成功加入黑名单拦截！`)
           return true
         } catch (e) {
@@ -187,7 +187,7 @@ export async function handleSecurity(pathname, req, res, url, ctx) {
           }
         }
 
-        ctx.logOperation('admin', '添加防火墙放行规则', `${proto.toUpperCase()}:${rawPort}`)
+        ctx.logOperation(ctx.currentUser(), '添加防火墙放行规则', `${proto.toUpperCase()}:${rawPort}`)
         res.json(null, '防火墙规则已成功注入内核并生效！')
         return true
       } catch (e) {
@@ -227,7 +227,7 @@ export async function handleSecurity(pathname, req, res, url, ctx) {
           } else {
             spawnSync('iptables', ['-I', 'INPUT', '1', '-s', srcIp, '-m', 'comment', '--comment', desc, '-j', 'DROP'])
           }
-          ctx.logOperation('admin', '修改防火墙规则(黑名单)', srcIp)
+          ctx.logOperation(ctx.currentUser(), '修改防火墙规则(黑名单)', srcIp)
           res.json(null, `规则修改成功！IP [${srcIp}] 拦截已生效`)
           return true
         } catch (e) {
@@ -269,7 +269,7 @@ export async function handleSecurity(pathname, req, res, url, ctx) {
           }
         }
 
-        ctx.logOperation('admin', '修改防火墙规则', `${proto.toUpperCase()}:${rawPort}`)
+        ctx.logOperation(ctx.currentUser(), '修改防火墙规则', `${proto.toUpperCase()}:${rawPort}`)
         res.json(null, '防火墙规则修改已成功注入内核生效！')
         return true
       } catch (e) {
@@ -300,7 +300,7 @@ export async function handleSecurity(pathname, req, res, url, ctx) {
         spawnSync('iptables', ['-D', chain, id])
         spawnSync('ip6tables', ['-D', chain, id])
       }
-      ctx.logOperation('admin', '删除防火墙规则', `Rule #${id}`)
+      ctx.logOperation(ctx.currentUser(), '删除防火墙规则', `Rule #${id}`)
       res.json(null, '防火墙规则已成功删除')
       return true
     } catch (e) {
@@ -329,7 +329,7 @@ export async function handleSecurity(pathname, req, res, url, ctx) {
         execSync(`sysctl -w net.ipv4.icmp_echo_ignore_all=${val}`)
         const sysctlConf = '/etc/sysctl.d/99-armguard-security.conf'
         fs.writeFileSync(sysctlConf, `# ArmGuard Security Policy\nnet.ipv4.icmp_echo_ignore_all = ${val}\n`, 'utf8')
-        ctx.logOperation('admin', ban ? '开启禁 Ping 隐身保护' : '允许 ICMP Ping 探测', '系统安全')
+        ctx.logOperation(ctx.currentUser(), ban ? '开启禁 Ping 隐身保护' : '允许 ICMP Ping 探测', '系统安全')
         res.json(null, ban ? '已开启禁 Ping，服务器对全网 ICMP 探测隐身' : '已恢复 ICMP Ping 响应')
       } catch (e) {
         res.json(null, `操作失败: ${e.message}`, 500)
@@ -413,7 +413,7 @@ export async function handleSecurity(pathname, req, res, url, ctx) {
         execSync('systemctl daemon-reload 2>/dev/null || true')
         execSync('systemctl restart ssh.socket 2>/dev/null || systemctl restart ssh 2>/dev/null || systemctl restart sshd 2>/dev/null || true')
 
-        ctx.logOperation('admin', '修改 SSH 服务配置与安全加固', `端口:${newPort}, Root登录:${allowRoot}, 密码认证:${allowPassword}`)
+        ctx.logOperation(ctx.currentUser(), '修改 SSH 服务配置与安全加固', `端口:${newPort}, Root登录:${allowRoot}, 密码认证:${allowPassword}`)
         res.json(null, `SSH 配置已成功保存并重载生效！当前监听端口: ${newPort}`)
         return true
       } catch (err) {
@@ -460,7 +460,7 @@ export async function handleSecurity(pathname, req, res, url, ctx) {
     }
     try {
       execSync(`fail2ban-client set ${jail} banip ${safeIp} 2>&1`)
-      ctx.logOperation('admin', 'Fail2ban 手动封禁 IP', `${safeIp} [${jail}]`)
+      ctx.logOperation(ctx.currentUser(), 'Fail2ban 手动封禁 IP', `${safeIp} [${jail}]`)
       res.json(null, `IP [${safeIp}] 已成功加入 Fail2ban 封禁黑名单！`)
       return true
     } catch (e) {
@@ -476,7 +476,7 @@ export async function handleSecurity(pathname, req, res, url, ctx) {
     const jail = (body.jail || 'sshd').replace(/[^a-zA-Z0-9_-]/g, '')
     if (safeIp) {
       spawnSync('fail2ban-client', ['set', jail, 'unbanip', safeIp])
-      ctx.logOperation('admin', 'Fail2ban 解封 IP', safeIp)
+      ctx.logOperation(ctx.currentUser(), 'Fail2ban 解封 IP', safeIp)
       res.json(null, 'IP 已成功解封')
       return true
     }
@@ -664,7 +664,7 @@ export async function handleSecurity(pathname, req, res, url, ctx) {
         return true
       }
 
-      ctx.logOperation('admin', '开启 UFW 防火墙 (防失联保护模式)', `已预先放行端口: ${Array.from(portsToAllow).join(', ')}`)
+      ctx.logOperation(ctx.currentUser(), '开启 UFW 防火墙 (防失联保护模式)', `已预先放行端口: ${Array.from(portsToAllow).join(', ')}`)
       res.json({
         status: 'active',
         allowed_ports: Array.from(portsToAllow)
@@ -684,7 +684,7 @@ export async function handleSecurity(pathname, req, res, url, ctx) {
     }
     try {
       const disRes = spawnSync('ufw', ['disable'], { encoding: 'utf-8' })
-      ctx.logOperation('admin', '关闭 UFW 防火墙', '恢复默认开放模式')
+      ctx.logOperation(ctx.currentUser(), '关闭 UFW 防火墙', '恢复默认开放模式')
       res.json({ status: 'inactive' }, 'UFW 防火墙已安全停用，底层网络连接已转为开放直通模式。')
       return true
     } catch (e) {

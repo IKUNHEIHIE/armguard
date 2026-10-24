@@ -169,7 +169,7 @@ export async function handleStream(pathname, req, res, url, ctx) {
 
     rules.unshift(newRule)
     ctx.saveJSON(ctx.STREAM_RULES_FILE, rules)
-    ctx.logOperation('admin', '创建四层转发规则', `${newRule.name} (:${newRule.listen_port} -> ${newRule.target_host}:${newRule.target_port})`)
+    ctx.logOperation(ctx.currentUser(), '创建四层转发规则', `${newRule.name} (:${newRule.listen_port} -> ${newRule.target_host}:${newRule.target_port})`)
     res.json(newRule, '四层转发规则已创建并生效')
     return true
   }
@@ -231,7 +231,7 @@ export async function handleStream(pathname, req, res, url, ctx) {
     }
 
     ctx.saveJSON(ctx.STREAM_RULES_FILE, rules)
-    ctx.logOperation('admin', '更新四层转发规则', `${target.name} (ID: ${id})`)
+    ctx.logOperation(ctx.currentUser(), '更新四层转发规则', `${target.name} (ID: ${id})`)
     res.json(target, '四层转发规则已更新')
     return true
   }
@@ -270,7 +270,7 @@ export async function handleStream(pathname, req, res, url, ctx) {
 
     try { execSync('nginx -t && systemctl reload nginx 2>/dev/null || true') } catch {}
     ctx.saveJSON(ctx.STREAM_RULES_FILE, rules)
-    ctx.logOperation('admin', `${target.status === 'running' ? '启用' : '暂停'}四层转发规则`, target.name)
+    ctx.logOperation(ctx.currentUser(), `${target.status === 'running' ? '启用' : '暂停'}四层转发规则`, target.name)
     res.json(target, `规则已${target.status === 'running' ? '启用' : '暂停'}`)
     return true
   }
@@ -286,7 +286,7 @@ export async function handleStream(pathname, req, res, url, ctx) {
       try { execSync('nginx -t && systemctl reload nginx 2>/dev/null || true') } catch {}
       ctx.streamRules = rules.filter(r => r.id !== id)
       ctx.saveJSON(ctx.STREAM_RULES_FILE, ctx.streamRules)
-      ctx.logOperation('admin', '删除四层转发规则', target.name)
+      ctx.logOperation(ctx.currentUser(), '删除四层转发规则', target.name)
     }
     res.json(null, '规则删除成功')
     return true

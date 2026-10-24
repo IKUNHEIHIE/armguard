@@ -3,11 +3,19 @@
   "version": "0.1.0-alpha",
   "type": "module",
   "description": "专为 ARM 架构量身打造的高性能、轻量级 Linux 可视化运维管理面板",
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "scripts": {
     "dev": "npm --prefix frontend run dev",
     "build": "npm --prefix frontend run build",
     "start": "node backend/dev_server.js",
-    "serve": "node backend/dev_server.js"
+    "serve": "node backend/dev_server.js",
+    "reset-admin": "node backend/scripts/reset_admin.js",
+    "test": "node --test backend/tests/panel_issues.test.js"
+  },
+  "dependencies": {
+    "ws": "8.22.0"
   },
   "keywords": ["arm", "arm64", "raspberry-pi", "linux", "server-panel", "ops"],
   "author": "ArmGuard Team",

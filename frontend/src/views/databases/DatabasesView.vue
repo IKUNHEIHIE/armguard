@@ -297,6 +297,7 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { Plus, Database, Archive, Terminal, Download, Trash2, Play } from 'lucide-vue-next'
 import Modal from '@/components/Modal.vue'
 import { DatabaseItem, BackupRecord, DatabaseEngineItem, databaseApi } from '@/api/database'
+import { downloadWithTicket } from '@/utils/download'
 import { toast } from '@/composables/useToast'
 
 const showCreateModal = ref(false)
@@ -479,9 +480,12 @@ async function createBackupForActiveDb() {
   }
 }
 
-function downloadBackup(fileName: string) {
-  const url = databaseApi.downloadBackupUrl(fileName)
-  window.open(url, '_blank')
+async function downloadBackup(fileName: string) {
+  try {
+    await downloadWithTicket(databaseApi.downloadBackupPath(fileName))
+  } catch (e: any) {
+    toast.error(`下载备份失败: ${e.message}`)
+  }
 }
 
 async function deleteBackupRecord(fileName: string) {

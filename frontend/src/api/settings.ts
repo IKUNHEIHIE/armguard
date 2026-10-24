@@ -1,4 +1,5 @@
 import apiClient, { ApiResponse } from './client'
+import type { MonitorPolicy } from './system'
 
 export interface PanelBackupItem {
   file_name: string
@@ -11,10 +12,14 @@ export interface PanelSettings {
   port: number
   security_entrance: string
   ssl_enabled: boolean
+  panel_ssl_cert?: string
+  panel_ssl_key?: string
   session_timeout_minutes: number
   ip_whitelist: string
   max_login_retry: number
+  login_lock_minutes?: number
   eco_mode_enabled: boolean
+  eco_mode_threshold_mb?: number
   current_version: string
   latest_version: string
   has_update: boolean
@@ -22,14 +27,27 @@ export interface PanelSettings {
   api_token: string
   two_factor_enabled: boolean
   webhook_enabled: boolean
-  webhook_type: 'feishu' | 'dingtalk' | 'wecom' | 'telegram'
+  webhook_type: 'feishu' | 'dingtalk' | 'wecom' | 'telegram' | 'custom'
   webhook_url: string
   alert_events: string[]
+  runtime?: {
+    effective_port: number
+    saved_port: number
+    port_overridden_by_env: boolean
+    restart_required: boolean
+    effective_protocol: 'http' | 'https'
+    saved_ssl_enabled: boolean
+    tls_ready: boolean
+    tls_error: string | null
+  }
+  monitor?: MonitorPolicy & {
+    sample_interval_ms?: number
+  }
 }
 
 export const settingsApi = {
   getSettings: () => apiClient.get<ApiResponse<PanelSettings>>('/settings/panel'),
-  updateSettings: (data: Partial<PanelSettings>) => apiClient.put<ApiResponse<void>>('/settings/panel', data),
+  updateSettings: (data: Partial<PanelSettings>) => apiClient.put<ApiResponse<Partial<PanelSettings>>>('/settings/panel', data),
   checkUpdate: () => apiClient.get<ApiResponse<{ current_version: string; latest_version: string; changelog: string; has_update: boolean }>>('/settings/panel/update-check'),
   
   // Admin credentials & API key
@@ -44,6 +62,7 @@ export const settingsApi = {
   // Panel Backup & Restore
   createPanelBackup: () => apiClient.post<ApiResponse<PanelBackupItem>>('/settings/backup/create'),
   getPanelBackups: () => apiClient.get<ApiResponse<{ list: PanelBackupItem[] }>>('/settings/backup/list'),
+  deletePanelBackup: (file_name: string) => apiClient.delete<ApiResponse<void>>(`/settings/backup/${encodeURIComponent(file_name)}`),
   
   // Engine Lifecycle & Cache
   clearPanelCache: () => apiClient.post<ApiResponse<void>>('/settings/panel/clear-cache'),

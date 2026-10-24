@@ -363,6 +363,7 @@ import {
 } from 'lucide-vue-next'
 import Modal from '@/components/Modal.vue'
 import { FileItem, fileApi } from '@/api/file'
+import { downloadWithTicket } from '@/utils/download'
 import { toast } from '@/composables/useToast'
 
 const route = useRoute()
@@ -625,8 +626,11 @@ async function handleRename() {
   }
 }
 
-function downloadFile(item: FileItem) {
-  const url = fileApi.downloadFileUrl(item.path)
-  window.open(url, '_blank')
+async function downloadFile(item: FileItem) {
+  try {
+    await downloadWithTicket(fileApi.downloadFilePath(item.path))
+  } catch (e: any) {
+    toast.error(`下载失败: ${e.message}`)
+  }
 }
 </script>

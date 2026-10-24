@@ -81,7 +81,7 @@ export async function handleDocker(pathname, req, res, url, ctx) {
       try {
         const child = spawnSync('docker', dockerArgs, { encoding: 'utf-8' })
         if (child.status === 0) {
-          ctx.logOperation('admin', '创建 Docker 容器', safeName)
+          ctx.logOperation(ctx.currentUser(), '创建 Docker 容器', safeName)
           res.json(null, '容器创建成功')
         } else {
           res.json(null, child.stderr || '创建容器失败', 500)
@@ -100,7 +100,7 @@ export async function handleDocker(pathname, req, res, url, ctx) {
     try {
       const child = spawnSync('docker', [action, cid], { encoding: 'utf-8' })
       if (child.status === 0) {
-        ctx.logOperation('admin', `${action} Docker 容器`, cid)
+        ctx.logOperation(ctx.currentUser(), `${action} Docker 容器`, cid)
         res.json(null, `容器已${action}`)
       } else {
         res.json(null, child.stderr || '操作失败', 500)
@@ -134,7 +134,7 @@ export async function handleDocker(pathname, req, res, url, ctx) {
     try {
       const child = spawnSync('docker', ['rm', '-f', cid], { encoding: 'utf-8' })
       if (child.status === 0) {
-        ctx.logOperation('admin', '删除 Docker 容器', cid)
+        ctx.logOperation(ctx.currentUser(), '删除 Docker 容器', cid)
         res.json(null, '容器已成功删除')
       } else {
         res.json(null, child.stderr || '删除容器失败', 500)
@@ -180,13 +180,13 @@ export async function handleDocker(pathname, req, res, url, ctx) {
     }
     const fullImg = rawImg.includes(':') ? rawImg : `${rawImg}:${rawTag}`
     try {
-      ctx.logOperation('admin', '开始拉取 Docker 镜像', fullImg)
+      ctx.logOperation(ctx.currentUser(), '开始拉取 Docker 镜像', fullImg)
       const child = spawnSync('docker', ['pull', fullImg], { encoding: 'utf-8', timeout: 180000 })
       if (child.status === 0) {
-        ctx.logOperation('admin', '成功拉取 Docker 镜像', fullImg)
+        ctx.logOperation(ctx.currentUser(), '成功拉取 Docker 镜像', fullImg)
         res.json({ image: fullImg, output: child.stdout }, `镜像 [${fullImg}] 拉取成功`)
       } else {
-        ctx.logOperation('admin', '拉取 Docker 镜像失败', `${fullImg}: ${child.stderr || child.stdout}`, '127.0.0.1', 'failed')
+        ctx.logOperation(ctx.currentUser(), '拉取 Docker 镜像失败', `${fullImg}: ${child.stderr || child.stdout}`, '127.0.0.1', 'failed')
         res.json(null, child.stderr || child.stdout || '拉取镜像失败', 500)
       }
     } catch (e) {
@@ -200,7 +200,7 @@ export async function handleDocker(pathname, req, res, url, ctx) {
     try {
       const child = spawnSync('docker', ['rmi', '-f', imgTarget], { encoding: 'utf-8' })
       if (child.status === 0) {
-        ctx.logOperation('admin', '删除 Docker 镜像', imgTarget)
+        ctx.logOperation(ctx.currentUser(), '删除 Docker 镜像', imgTarget)
         res.json(null, '镜像删除成功')
       } else {
         res.json(null, child.stderr || '删除镜像失败', 500)

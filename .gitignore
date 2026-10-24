@@ -40,5 +40,7 @@ desktop.ini
 # Temporary & Log Files
 *.log
 logs/
+!frontend/src/views/logs/
+!frontend/src/views/logs/**
 temp/
 tmp/

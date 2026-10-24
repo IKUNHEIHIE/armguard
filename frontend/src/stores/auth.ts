@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { authApi, LoginParams, LoginResult } from '@/api/auth'
+import { useSystemStore } from '@/stores/system'
 
 export const useAuthStore = defineStore('auth', () => {
   const token = ref<string>(localStorage.getItem('armguard_token') || '')
@@ -30,7 +31,26 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
+  async function refreshUserInfo() {
+    if (!token.value) return
+    try {
+      const res = await authApi.getUserInfo()
+      if (res.data.code === 0 && res.data.data) {
+        user.value = {
+          id: res.data.data.id,
+          username: res.data.data.username,
+          role: res.data.data.role,
+          totp_enabled: res.data.data.totp_enabled
+        }
+        localStorage.setItem('armguard_user', JSON.stringify(user.value))
+      }
+    } catch {}
+  }
+
   function logout() {
+    try {
+      useSystemStore().stopMonitoring()
+    } catch {}
     try {
       authApi.logout().catch(() => {})
     } finally {
@@ -48,6 +68,7 @@ export const useAuthStore = defineStore('auth', () => {
     role,
     isAdmin,
     login,
+    refreshUserInfo,
     logout
   }
 })

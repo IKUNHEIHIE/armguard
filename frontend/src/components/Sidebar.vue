@@ -41,27 +41,27 @@
     <div class="p-4 m-3 rounded-xl bg-slate-950/60 border border-slate-800 space-y-3">
       <div class="flex items-center justify-between text-xs text-slate-400 font-mono">
         <span class="flex items-center gap-1.5">
-          <span class="w-2 h-2 rounded-full" :class="systemStore.wsConnected ? 'bg-emerald-400' : 'bg-amber-400 animate-pulse'"></span>
-          {{ systemStore.wsConnected ? '实时监控推流' : '轮询模式' }}
+          <span class="w-2 h-2 rounded-full" :class="systemStore.wsConnected ? 'bg-emerald-400' : (systemStore.monitorActive ? 'bg-amber-400 animate-pulse' : 'bg-slate-500')"></span>
+          {{ systemStore.wsConnected ? '实时监控推流' : (systemStore.monitorActive ? '轮询模式' : '监控待机') }}
         </span>
-        <span>{{ systemStore.armThermal.temp_c ? systemStore.armThermal.temp_c.toFixed(1) + '°C' : '--' }}</span>
+        <span>{{ systemStore.armThermal.temp_c !== null && systemStore.armThermal.temp_c !== undefined ? systemStore.armThermal.temp_c.toFixed(1) + '°C' : '--' }}</span>
       </div>
 
       <div class="space-y-1.5 text-xs font-mono">
         <div class="flex justify-between text-slate-400">
           <span>CPU</span>
-          <span class="text-slate-200">{{ systemStore.realtime.cpu.percent.toFixed(0) }}%</span>
+          <span class="text-slate-200">{{ systemStore.realtime.cpu.percent !== null ? systemStore.realtime.cpu.percent.toFixed(0) + '%' : '--' }}</span>
         </div>
         <div class="h-1.5 w-full bg-slate-800 rounded-full overflow-hidden">
-          <div class="h-full bg-brand-500 rounded-full transition-all duration-500" :style="{ width: `${systemStore.realtime.cpu.percent}%` }"></div>
+          <div class="h-full bg-brand-500 rounded-full transition-all duration-500" :style="{ width: `${systemStore.realtime.cpu.percent ?? 0}%` }"></div>
         </div>
 
         <div class="flex justify-between text-slate-400 pt-1">
           <span>RAM</span>
-          <span class="text-slate-200">{{ systemStore.realtime.memory.percent.toFixed(0) }}%</span>
+          <span class="text-slate-200">{{ systemStore.realtime.memory.percent !== null ? systemStore.realtime.memory.percent.toFixed(0) + '%' : '--' }}</span>
         </div>
         <div class="h-1.5 w-full bg-slate-800 rounded-full overflow-hidden">
-          <div class="h-full bg-cyan-500 rounded-full transition-all duration-500" :style="{ width: `${systemStore.realtime.memory.percent}%` }"></div>
+          <div class="h-full bg-cyan-500 rounded-full transition-all duration-500" :style="{ width: `${systemStore.realtime.memory.percent ?? 0}%` }"></div>
         </div>
       </div>
     </div>

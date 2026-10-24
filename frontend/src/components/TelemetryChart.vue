@@ -75,14 +75,14 @@
           <span class="w-2.5 h-2.5 rounded-full bg-emerald-400"></span>
           <span>{{ activeMode === 'cpu_temp' ? 'CPU 利用率' : '下行 RX' }}:</span>
           <strong class="text-slate-100 tabular-nums font-bold">
-            {{ activeMode === 'cpu_temp' ? `${(systemStore.realtime.cpu.percent || 0).toFixed(1)}%` : formatNetworkSpeed(systemStore.realtime.network.rx_bytes_sec) }}
+            {{ activeMode === 'cpu_temp' ? (systemStore.realtime.cpu.percent !== null ? `${systemStore.realtime.cpu.percent.toFixed(1)}%` : '--') : formatNetworkSpeed(systemStore.realtime.network.rx_bytes_sec) }}
           </strong>
         </span>
         <span class="flex items-center gap-1.5">
           <span class="w-2.5 h-2.5 rounded-full" :class="activeMode === 'cpu_temp' ? 'bg-amber-400' : 'bg-cyan-400'"></span>
           <span>{{ activeMode === 'cpu_temp' ? 'ARM 温度' : '上行 TX' }}:</span>
           <strong class="text-slate-100 tabular-nums font-bold">
-            {{ activeMode === 'cpu_temp' ? `${(systemStore.armThermal.temp_c || 0).toFixed(1)}°C` : formatNetworkSpeed(systemStore.realtime.network.tx_bytes_sec) }}
+            {{ activeMode === 'cpu_temp' ? (systemStore.armThermal.temp_c !== null && systemStore.armThermal.temp_c !== undefined ? `${systemStore.armThermal.temp_c.toFixed(1)}°C` : '传感器不可用') : formatNetworkSpeed(systemStore.realtime.network.tx_bytes_sec) }}
           </strong>
         </span>
       </div>
@@ -116,10 +116,10 @@ const activeWindow = ref<string>('30s')
 
 interface DataPoint {
   time: string
-  cpu: number
-  temp: number
-  rxKb: number
-  txKb: number
+  cpu: number | null
+  temp: number | null
+  rxKb: number | null
+  txKb: number | null
 }
 
 const historyBuffer = ref<DataPoint[]>([])
@@ -130,29 +130,12 @@ function getWindowMaxPoints(): number {
   return 30 // 30s (~1.5s per tick)
 }
 
-function formatNetworkSpeed(bytesSec?: number): string {
-  if (!bytesSec || bytesSec === 0) return '0 KB/s'
+function formatNetworkSpeed(bytesSec?: number | null): string {
+  if (bytesSec === null || bytesSec === undefined || !Number.isFinite(bytesSec)) return '--'
+  if (bytesSec === 0) return '0 KB/s'
   const kb = bytesSec / 1024
   if (kb < 1024) return `${kb.toFixed(1)} KB/s`
   return `${(kb / 1024).toFixed(2)} MB/s`
-}
-
-function initMockSeed() {
-  const now = Date.now()
-  const initialPoints: DataPoint[] = []
-  const max = getWindowMaxPoints()
-  for (let i = max; i >= 1; i--) {
-    const t = new Date(now - i * 2000)
-    const timeStr = `${t.getHours().toString().padStart(2, '0')}:${t.getMinutes().toString().padStart(2, '0')}:${t.getSeconds().toString().padStart(2, '0')}`
-    initialPoints.push({
-      time: timeStr,
-      cpu: Math.max(2, Math.min(25, 8 + Math.sin(i / 2) * 5 + (Math.random() * 4 - 2))),
-      temp: Math.max(35, Math.min(50, 38.5 + (Math.random() * 2 - 1))),
-      rxKb: Math.max(5, 30 + Math.sin(i / 3) * 20 + Math.random() * 10),
-      txKb: Math.max(2, 15 + Math.cos(i / 3) * 10 + Math.random() * 5)
-    })
-  }
-  historyBuffer.value = initialPoints
 }
 
 function updateChart() {
@@ -213,7 +196,7 @@ function updateChart() {
       type: 'line' as const,
       smooth: 0.4,
       showSymbol: false,
-      data: historyBuffer.value.map(d => parseFloat(d.rxKb.toFixed(1))),
+      data: historyBuffer.value.map(d => (d.rxKb === null ? null : parseFloat(d.rxKb.toFixed(1)))),
       lineStyle: {
         width: 2.5,
         color: '#10b981'
@@ -233,7 +216,7 @@ function updateChart() {
       type: 'line' as const,
       smooth: 0.4,
       showSymbol: false,
-      data: historyBuffer.value.map(d => parseFloat(d.txKb.toFixed(1))),
+      data: historyBuffer.value.map(d => (d.txKb === null ? null : parseFloat(d.txKb.toFixed(1)))),
       lineStyle: {
         width: 2,
         color: '#06b6d4'
@@ -385,13 +368,20 @@ function updateChart() {
 }
 
 function pushRealtimeData() {
-  const now = new Date()
+  const ts = systemStore.realtime.timestamp
+  if (!ts) return
+  const now = new Date(ts)
   const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`
 
-  const cpu = parseFloat((systemStore.realtime.cpu.percent || 0).toFixed(1))
-  const temp = parseFloat((systemStore.armThermal.temp_c || 38.5).toFixed(1))
-  const rxKb = (systemStore.realtime.network.rx_bytes_sec || 0) / 1024
-  const txKb = (systemStore.realtime.network.tx_bytes_sec || 0) / 1024
+  const cpuRaw = systemStore.realtime.cpu.percent
+  const tempRaw = systemStore.armThermal.temp_c
+  const rxRaw = systemStore.realtime.network.rx_bytes_sec
+  const txRaw = systemStore.realtime.network.tx_bytes_sec
+
+  const cpu = cpuRaw !== null && Number.isFinite(cpuRaw) ? parseFloat(cpuRaw.toFixed(1)) : null
+  const temp = tempRaw !== null && tempRaw !== undefined && Number.isFinite(tempRaw) ? parseFloat(tempRaw.toFixed(1)) : null
+  const rxKb = rxRaw !== null && Number.isFinite(rxRaw) ? parseFloat((rxRaw / 1024).toFixed(2)) : null
+  const txKb = txRaw !== null && Number.isFinite(txRaw) ? parseFloat((txRaw / 1024).toFixed(2)) : null
 
   historyBuffer.value.push({ time: timeStr, cpu, temp, rxKb, txKb })
 
@@ -403,12 +393,18 @@ function pushRealtimeData() {
   updateChart()
 }
 
-watch([() => systemStore.realtime.timestamp, () => activeMode.value, () => activeWindow.value], () => {
+watch(() => systemStore.realtime.timestamp, () => {
   pushRealtimeData()
 })
 
+watch([() => activeMode.value, () => activeWindow.value], () => {
+  updateChart()
+})
+
 onMounted(async () => {
-  initMockSeed()
+  if (systemStore.realtime.timestamp) {
+    pushRealtimeData()
+  }
   await nextTick()
 
   if (chartRef.value) {

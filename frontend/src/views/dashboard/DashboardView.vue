@@ -2,7 +2,7 @@
   <div class="space-y-6">
     <!-- Top Hardware Alert Banner if Throttling or Under-voltage detected -->
     <div
-      v-if="systemStore.armThermal.under_voltage || systemStore.armThermal.throttled"
+      v-if="!dismissAlert && (systemStore.armThermal.under_voltage === true || systemStore.armThermal.throttled === true)"
       class="p-4 rounded-xl bg-rose-950/60 border border-rose-800/80 text-rose-200 flex items-center justify-between gap-3 shadow-lg"
     >
       <div class="flex items-center gap-3">
@@ -10,8 +10,8 @@
         <div>
           <div class="font-bold text-sm">检测到 ARM 硬件异常告警</div>
           <div class="text-xs text-rose-300/80 font-mono mt-0.5">
-            <span v-if="systemStore.armThermal.under_voltage">⚠️ 供电欠压（Under-voltage detected）：电源输入电压不足，可能引发单板机死机或降频。 </span>
-            <span v-if="systemStore.armThermal.throttled">🔥 触发温控降频（Frequency throttled）：CPU 核心温度过高，已被动降频保护。</span>
+            <span v-if="systemStore.armThermal.under_voltage === true">⚠️ 供电欠压（Under-voltage detected）：电源输入电压不足，可能引发单板机死机或降频。 </span>
+            <span v-if="systemStore.armThermal.throttled === true">🔥 触发温控降频（Frequency throttled）：CPU 核心温度过高，已被动降频保护。</span>
           </div>
         </div>
       </div>
@@ -28,9 +28,9 @@
       <!-- CPU Usage -->
       <GaugeCard
         title="CPU 使用率"
-        :value-text="`${systemStore.realtime.cpu.percent.toFixed(1)}%`"
-        :percent="systemStore.realtime.cpu.percent"
-        :sub-text="`${systemStore.info?.cpu_cores || 4} 核心 / ${systemStore.realtime.cpu.frequency_mhz || 1500} MHz`"
+        :value-text="systemStore.realtime.cpu.percent !== null ? `${systemStore.realtime.cpu.percent.toFixed(1)}%` : '--'"
+        :percent="systemStore.realtime.cpu.percent ?? 0"
+        :sub-text="`${systemStore.info?.cpu_cores ?? '--'} 核心 / ${systemStore.realtime.cpu.frequency_mhz !== null ? systemStore.realtime.cpu.frequency_mhz + ' MHz' : '频率未知'}`"
         variant="brand"
       >
         <template #icon>
@@ -41,9 +41,9 @@
       <!-- RAM Usage -->
       <GaugeCard
         title="物理内存 (RAM)"
-        :value-text="`${systemStore.realtime.memory.percent.toFixed(1)}%`"
-        :percent="systemStore.realtime.memory.percent"
-        :sub-text="`${formatBytes(systemStore.realtime.memory.used)} / ${formatBytes(systemStore.realtime.memory.total)}`"
+        :value-text="systemStore.realtime.memory.percent !== null ? `${systemStore.realtime.memory.percent.toFixed(1)}%` : '--'"
+        :percent="systemStore.realtime.memory.percent ?? 0"
+        :sub-text="`${formatBytes(systemStore.realtime.memory.used)} / ${formatBytes(systemStore.realtime.memory.total)} (Swap: ${systemStore.realtime.memory.swap_total !== null ? (systemStore.realtime.memory.swap_total > 0 ? `${formatBytes(systemStore.realtime.memory.swap_used)}/${formatBytes(systemStore.realtime.memory.swap_total)}` : '未启用') : '未知'})`"
         variant="cyan"
       >
         <template #icon>
@@ -54,10 +54,10 @@
       <!-- ARM Thermal / Temperature -->
       <GaugeCard
         title="ARM 核心温度"
-        :value-text="`${systemStore.armThermal.temp_c ? systemStore.armThermal.temp_c.toFixed(1) : '--'} °C`"
-        :percent="Math.min(100, ((systemStore.armThermal.temp_c || 40) / 85) * 100)"
+        :value-text="systemStore.armThermal.temp_c !== null && systemStore.armThermal.temp_c !== undefined ? `${systemStore.armThermal.temp_c.toFixed(1)} °C` : '不可用'"
+        :percent="systemStore.armThermal.temp_c !== null && systemStore.armThermal.temp_c !== undefined ? Math.min(100, (systemStore.armThermal.temp_c / 85) * 100) : 0"
         percent-label="发热比例 (最高85°C)"
-        :sub-text="`核心电压: ${systemStore.armThermal.voltage_v ? systemStore.armThermal.voltage_v.toFixed(2) + 'V' : '0.85V'}`"
+        :sub-text="systemStore.armThermal.voltage_v !== null && systemStore.armThermal.voltage_v !== undefined ? `核心电压: ${systemStore.armThermal.voltage_v.toFixed(2)}V` : (systemStore.armThermal.temp_source ? `来源: ${systemStore.armThermal.temp_source}` : '核心电压: 不支持读取')"
         :variant="getTempVariant(systemStore.armThermal.temp_c)"
       >
         <template #icon>
@@ -68,9 +68,9 @@
       <!-- Disk Usage -->
       <GaugeCard
         title="主磁盘存储"
-        :value-text="`${systemStore.realtime.disk.percent.toFixed(1)}%`"
-        :percent="systemStore.realtime.disk.percent"
-        :sub-text="`${formatBytes(systemStore.realtime.disk.used)} / ${formatBytes(systemStore.realtime.disk.total)}`"
+        :value-text="systemStore.realtime.disk.percent !== null ? `${systemStore.realtime.disk.percent.toFixed(1)}%` : '--'"
+        :percent="systemStore.realtime.disk.percent ?? 0"
+        :sub-text="`${formatBytes(systemStore.realtime.disk.used)} / ${formatBytes(systemStore.realtime.disk.total)}${systemStore.realtime.disk.read_bytes_sec !== null ? ` · R:${formatNetworkSpeed(systemStore.realtime.disk.read_bytes_sec)} W:${formatNetworkSpeed(systemStore.realtime.disk.write_bytes_sec)}` : ''}`"
         variant="indigo"
       >
         <template #icon>
@@ -91,13 +91,21 @@
             <div>
               <h2 class="text-sm font-bold text-white tracking-tight flex items-center gap-2">
                 ARM 硬件专属传感器诊断
-                <span class="text-[10px] px-2 py-0.5 rounded-full bg-brand-500/20 text-brand-300 font-mono">vcgencmd / hwmon</span>
+                <span class="text-[10px] px-2 py-0.5 rounded-full bg-brand-500/20 text-brand-300 font-mono">
+                  {{ systemStore.armThermal.throttle_source || 'thermal / cpufreq' }}
+                </span>
               </h2>
-              <p class="text-xs text-slate-400 font-mono">实时硬件状态、电源电压与芯片温控机制</p>
+              <p class="text-xs text-slate-400 font-mono">
+                实时硬件状态、电源电压与芯片温控机制
+                <span v-if="systemStore.realtime.timestamp" class="ml-2 text-slate-500">
+                  (采集: {{ new Date(systemStore.realtime.timestamp).toLocaleTimeString() }})
+                </span>
+                <span v-if="systemStore.isStale" class="ml-2 text-amber-400">[数据已过期]</span>
+              </p>
             </div>
           </div>
           <span class="text-xs font-mono px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-800 text-slate-300">
-            架构: {{ systemStore.info?.arch || 'aarch64' }}
+            架构: {{ systemStore.info?.arch || '未知' }}
           </span>
         </div>
 
@@ -105,34 +113,52 @@
           <!-- Board model -->
           <div class="p-3.5 rounded-xl bg-slate-950/50 border border-slate-800/80">
             <div class="text-[11px] text-slate-400 mb-1">主板芯片型号</div>
-            <div class="text-xs font-bold text-slate-100 truncate" :title="systemStore.info?.arm_board_model || systemStore.armThermal.board_model">
-              {{ systemStore.info?.arm_board_model || systemStore.armThermal.board_model || 'Raspberry Pi / ARM Server' }}
+            <div class="text-xs font-bold text-slate-100 truncate" :title="systemStore.info?.arm_board_model || systemStore.armThermal.board_model || '未知型号'">
+              {{ systemStore.info?.arm_board_model || systemStore.armThermal.board_model || '未知型号' }}
             </div>
           </div>
 
           <!-- Voltage -->
           <div class="p-3.5 rounded-xl bg-slate-950/50 border border-slate-800/80">
             <div class="text-[11px] text-slate-400 mb-1">供电状态</div>
-            <div class="flex items-center gap-1.5 text-xs font-bold font-mono" :class="systemStore.armThermal.under_voltage ? 'text-rose-400' : 'text-emerald-400'">
-              <span class="w-2 h-2 rounded-full" :class="systemStore.armThermal.under_voltage ? 'bg-rose-500' : 'bg-emerald-400'"></span>
-              {{ systemStore.armThermal.under_voltage ? '欠压异常' : '电压正常 (' + (systemStore.armThermal.voltage_v || 0.85).toFixed(2) + 'V)' }}
+            <div
+              class="flex items-center gap-1.5 text-xs font-bold font-mono"
+              :class="systemStore.armThermal.under_voltage === true ? 'text-rose-400' : (systemStore.armThermal.under_voltage === false ? 'text-emerald-400' : 'text-slate-400')"
+            >
+              <span
+                class="w-2 h-2 rounded-full"
+                :class="systemStore.armThermal.under_voltage === true ? 'bg-rose-500' : (systemStore.armThermal.under_voltage === false ? 'bg-emerald-400' : 'bg-slate-500')"
+              ></span>
+              <span v-if="systemStore.armThermal.under_voltage === true">欠压异常</span>
+              <span v-else-if="systemStore.armThermal.under_voltage === false">
+                电压正常{{ systemStore.armThermal.voltage_v !== null && systemStore.armThermal.voltage_v !== undefined ? ` (${systemStore.armThermal.voltage_v.toFixed(2)}V)` : '' }}
+              </span>
+              <span v-else>不支持读取</span>
             </div>
           </div>
 
           <!-- Throttling state -->
           <div class="p-3.5 rounded-xl bg-slate-950/50 border border-slate-800/80">
-            <div class="text-[11px] text-slate-400 mb-1">CPU 降频机制</div>
-            <div class="flex items-center gap-1.5 text-xs font-bold font-mono" :class="systemStore.armThermal.throttled ? 'text-amber-400' : 'text-emerald-400'">
-              <span class="w-2 h-2 rounded-full" :class="systemStore.armThermal.throttled ? 'bg-amber-500' : 'bg-emerald-400'"></span>
-              {{ systemStore.armThermal.throttled ? '已被动降频' : '全速运行中' }}
+            <div class="text-[11px] text-slate-400 mb-1">CPU 降频检测</div>
+            <div
+              class="flex items-center gap-1.5 text-xs font-bold font-mono"
+              :class="systemStore.armThermal.throttled === true ? 'text-amber-400' : (systemStore.armThermal.throttled === false ? 'text-emerald-400' : 'text-slate-400')"
+            >
+              <span
+                class="w-2 h-2 rounded-full"
+                :class="systemStore.armThermal.throttled === true ? 'bg-amber-500' : (systemStore.armThermal.throttled === false ? 'bg-emerald-400' : 'bg-slate-500')"
+              ></span>
+              <span v-if="systemStore.armThermal.throttled === true">已被动降频</span>
+              <span v-else-if="systemStore.armThermal.throttled === false">未降频</span>
+              <span v-else>不支持 (无 vcgencmd)</span>
             </div>
           </div>
 
           <!-- Governor -->
           <div class="p-3.5 rounded-xl bg-slate-950/50 border border-slate-800/80">
             <div class="text-[11px] text-slate-400 mb-1">调频策略 (Governor)</div>
-            <div class="text-xs font-mono font-bold text-cyan-400">
-              {{ systemStore.armThermal.governor || 'schedutil' }}
+            <div class="text-xs font-mono font-bold text-cyan-400 truncate" :title="cpuPolicySummary">
+              {{ systemStore.armThermal.governor || systemStore.realtime.cpu.governor || '不支持 / 未知' }}
             </div>
           </div>
         </div>
@@ -149,7 +175,9 @@
               <Activity class="w-4 h-4 text-cyan-400" />
               实时网络 I/O 与负载
             </h2>
-            <span class="text-xs font-mono text-cyan-400">{{ systemStore.info?.distribution || 'Debian GNU/Linux' }}</span>
+            <span class="text-xs font-mono text-cyan-400 truncate max-w-[160px]" :title="systemStore.info?.distribution || '未知发行版'">
+              {{ systemStore.info?.distribution || '未知发行版' }}
+            </span>
           </div>
 
           <div class="space-y-4">
@@ -189,9 +217,9 @@
             <div class="p-3.5 rounded-xl bg-slate-950/60 border border-slate-800">
               <div class="text-xs text-slate-400 mb-1.5">系统平均负载 (1 / 5 / 15 分钟)</div>
               <div class="flex items-center gap-3 font-mono font-bold text-sm text-slate-200">
-                <span class="px-2 py-0.5 rounded bg-slate-900 border border-slate-700 tabular-nums">{{ systemStore.realtime.load_avg[0]?.toFixed(2) || '0.12' }}</span>
-                <span class="px-2 py-0.5 rounded bg-slate-900 border border-slate-700 tabular-nums">{{ systemStore.realtime.load_avg[1]?.toFixed(2) || '0.15' }}</span>
-                <span class="px-2 py-0.5 rounded bg-slate-900 border border-slate-700 tabular-nums">{{ systemStore.realtime.load_avg[2]?.toFixed(2) || '0.08' }}</span>
+                <span class="px-2 py-0.5 rounded bg-slate-900 border border-slate-700 tabular-nums">{{ formatLoad(systemStore.realtime.load_avg[0]) }}</span>
+                <span class="px-2 py-0.5 rounded bg-slate-900 border border-slate-700 tabular-nums">{{ formatLoad(systemStore.realtime.load_avg[1]) }}</span>
+                <span class="px-2 py-0.5 rounded bg-slate-900 border border-slate-700 tabular-nums">{{ formatLoad(systemStore.realtime.load_avg[2]) }}</span>
               </div>
             </div>
           </div>
@@ -199,8 +227,9 @@
 
         <!-- Kernel & System Specs -->
         <div class="pt-4 border-t border-slate-800 text-[11px] font-mono text-slate-400 space-y-1">
-          <div><span class="text-slate-500">内核:</span> {{ systemStore.info?.kernel || 'Linux 6.6.20+rpt-rpi-v8' }}</div>
-          <div><span class="text-slate-500">型号:</span> {{ systemStore.info?.cpu_model || 'Cortex-A72 @ 1.50GHz' }}</div>
+          <div><span class="text-slate-500">内核:</span> {{ systemStore.info?.kernel || '未知' }}</div>
+          <div><span class="text-slate-500">CPU:</span> {{ systemStore.info?.cpu_model || '未知型号' }}</div>
+          <div v-if="cpuPolicySummary"><span class="text-slate-500">集群:</span> {{ cpuPolicySummary }}</div>
         </div>
       </div>
     </div>
@@ -354,7 +383,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   Cpu,
@@ -435,31 +464,45 @@ function goToAppStore() {
   router.push('/appstore')
 }
 
-const processes = ref<ProcessItem[]>([
-  { pid: 1024, name: 'armguard-server', user: 'root', cpu_percent: 0.8, mem_percent: 1.2, mem_bytes: 48 * 1024 * 1024, status: 'R', command: '/opt/armguard/armguard-server' },
-  { pid: 482, name: 'nginx: worker process', user: 'www-data', cpu_percent: 0.4, mem_percent: 0.8, mem_bytes: 32 * 1024 * 1024, status: 'S', command: 'nginx: worker process' },
-  { pid: 890, name: 'mysqld', user: 'mysql', cpu_percent: 1.5, mem_percent: 6.5, mem_bytes: 260 * 1024 * 1024, status: 'S', command: '/usr/sbin/mysqld' },
-  { pid: 612, name: 'redis-server', user: 'redis', cpu_percent: 0.2, mem_percent: 0.6, mem_bytes: 24 * 1024 * 1024, status: 'S', command: '/usr/bin/redis-server' },
-  { pid: 994, name: 'php-fpm8.2', user: 'www-data', cpu_percent: 0.3, mem_percent: 2.1, mem_bytes: 84 * 1024 * 1024, status: 'S', command: 'php-fpm: pool www' },
-])
+const processes = ref<ProcessItem[]>([])
 
-function getTempVariant(temp?: number): 'brand' | 'amber' | 'rose' {
-  if (!temp) return 'brand'
+const cpuPolicySummary = computed(() => {
+  const policies = systemStore.realtime.cpu.policies
+  if (!policies || !policies.length) return ''
+  return policies
+    .map(p => {
+      const cpuRange = p.cpus.length > 1 ? `CPU${p.cpus[0]}-${p.cpus[p.cpus.length - 1]}` : `CPU${p.cpus[0] ?? 0}`
+      const freq = p.cur_mhz ?? p.max_mhz
+      const max = p.max_mhz
+      return `${cpuRange}: ${freq !== null ? freq + 'MHz' : '--'}${max !== null && freq !== max ? ` (上限 ${max}MHz)` : ''}`
+    })
+    .join(' · ')
+})
+
+function formatLoad(val?: number | null): string {
+  if (val === null || val === undefined || !Number.isFinite(val)) return '--'
+  return val.toFixed(2)
+}
+
+function getTempVariant(temp?: number | null): 'brand' | 'amber' | 'rose' {
+  if (temp === null || temp === undefined || !Number.isFinite(temp)) return 'brand'
   if (temp >= 70) return 'rose'
   if (temp >= 55) return 'amber'
   return 'brand'
 }
 
-function formatBytes(bytes?: number): string {
-  if (!bytes || bytes === 0) return '0 B'
+function formatBytes(bytes?: number | null): string {
+  if (bytes === null || bytes === undefined || !Number.isFinite(bytes)) return '--'
+  if (bytes === 0) return '0 B'
   const k = 1024
   const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
   const i = Math.floor(Math.log(bytes) / Math.log(k))
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i]
 }
 
-function formatNetworkSpeed(bytesSec?: number): string {
-  if (!bytesSec || bytesSec === 0) return '0 KB/s'
+function formatNetworkSpeed(bytesSec?: number | null): string {
+  if (bytesSec === null || bytesSec === undefined || !Number.isFinite(bytesSec)) return '--'
+  if (bytesSec === 0) return '0 KB/s'
   const kb = bytesSec / 1024
   if (kb < 1024) return `${kb.toFixed(1)} KB/s`
   return `${(kb / 1024).toFixed(2)} MB/s`
@@ -469,11 +512,11 @@ async function loadProcesses() {
   loadingProcesses.value = true
   try {
     const res = await systemApi.getProcesses(sortBy.value, 15)
-    if (res.data.code === 0 && res.data.data.list.length > 0) {
+    if (res.data.code === 0 && Array.isArray(res.data.data?.list)) {
       processes.value = res.data.data.list
     }
-  } catch (err) {
-    // fallback to mock processes
+  } catch {
+    processes.value = []
   } finally {
     loadingProcesses.value = false
   }
@@ -499,6 +542,6 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
-  // systemStore.stopMonitoring()
+  systemStore.stopMonitoring()
 })
 </script>

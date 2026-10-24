@@ -12,7 +12,10 @@ export function syncCrontabToSystem(crontabs) {
       }
     }
     const crontabContent = lines.join('\n') + (lines.length > 0 ? '\n' : '')
-    spawnSync('crontab', ['-'], { input: crontabContent, encoding: 'utf-8' })
+    const child = spawnSync('crontab', ['-'], { input: crontabContent, encoding: 'utf-8', timeout: 10000 })
+    if (child.error || child.status !== 0) {
+      return false
+    }
     return true
   } catch (err) {
     console.error('Failed to sync crontab:', err)
@@ -47,7 +50,7 @@ export async function handleCrontabs(pathname, req, res, url, ctx) {
         ctx.crontabs.unshift(newJob)
         syncCrontabToSystem(ctx.crontabs)
         ctx.saveJSON(ctx.CRONTAB_FILE, ctx.crontabs)
-        ctx.logOperation('admin', '创建计划任务', newJob.name)
+        ctx.logOperation(ctx.currentUser(), '创建计划任务', newJob.name)
         res.json(newJob, '计划任务已成功添加并同步至系统')
         return true
       } catch (e) {
@@ -73,7 +76,7 @@ export async function handleCrontabs(pathname, req, res, url, ctx) {
       if (body.status !== undefined) job.status = body.status
       syncCrontabToSystem(ctx.crontabs)
       ctx.saveJSON(ctx.CRONTAB_FILE, ctx.crontabs)
-      ctx.logOperation('admin', '更新计划任务', job.name)
+      ctx.logOperation(ctx.currentUser(), '更新计划任务', job.name)
       res.json(job, '计划任务已更新')
       return true
     }
@@ -86,7 +89,7 @@ export async function handleCrontabs(pathname, req, res, url, ctx) {
       const removed = ctx.crontabs.splice(idx, 1)[0]
       syncCrontabToSystem(ctx.crontabs)
       ctx.saveJSON(ctx.CRONTAB_FILE, ctx.crontabs)
-      ctx.logOperation('admin', '删除计划任务', removed.name)
+      ctx.logOperation(ctx.currentUser(), '删除计划任务', removed.name)
       res.json(null, `计划任务 [${removed.name}] 已删除`)
       return true
     }
@@ -123,7 +126,7 @@ export async function handleCrontabs(pathname, req, res, url, ctx) {
         job.last_run_duration_ms = duration
         ctx.saveJSON(ctx.CRONTAB_FILE, ctx.crontabs)
       }
-      ctx.logOperation('admin', '手动执行计划任务', job?.name || cmd, '127.0.0.1', isSuccess ? 'success' : 'failed')
+      ctx.logOperation(ctx.currentUser(), '手动执行计划任务', job?.name || cmd, '127.0.0.1', isSuccess ? 'success' : 'failed')
       if (isSuccess) {
         res.json({ output, duration_ms: duration, status: 'success' }, '执行成功')
       } else {

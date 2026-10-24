@@ -365,7 +365,7 @@ export async function handleApps(pathname, req, res, url, ctx) {
         task.progress_percent = 100
         task.logs.push(`✓ ${targetDisplayName} 安装成功！`)
         task.log_tail = `✓ ${targetDisplayName} 安装成功！`
-        ctx.logOperation('admin', '安装应用软件', targetDisplayName)
+        ctx.logOperation(ctx.currentUser(), '安装应用软件', targetDisplayName)
       } else {
         task.stage = 'failed'
         task.progress_percent = 100
@@ -393,7 +393,7 @@ export async function handleApps(pathname, req, res, url, ctx) {
     try {
       spawnSync('apt-get', ['remove', '-y', pkgName])
       invalidateMarketAppsCache()
-      ctx.logOperation('admin', '卸载应用软件', target?.name || appKey)
+      ctx.logOperation(ctx.currentUser(), '卸载应用软件', target?.name || appKey)
       res.json(null, '应用已成功卸载')
     } catch (e) {
       res.json(null, e.message, 500)
@@ -756,7 +756,7 @@ export async function handleApps(pathname, req, res, url, ctx) {
         } else if (action === 'stop') {
           disconnectWarpReal(ctx)
         }
-        ctx.logOperation('admin', `WARP 隧道服务控制 [${action}]`, 'Cloudflare WARP')
+        ctx.logOperation(ctx.currentUser(), `WARP 隧道服务控制 [${action}]`, 'Cloudflare WARP')
         invalidateMarketAppsCache()
         res.json(null, `WARP 隧道已成功${action === 'start' ? '启动连接' : action === 'stop' ? '断开' : '重启'}`)
       } catch (err) {
@@ -793,7 +793,7 @@ export async function handleApps(pathname, req, res, url, ctx) {
       const child = spawnSync('systemctl', [action, serviceName], { encoding: 'utf-8' })
       if (child.status === 0) {
         invalidateMarketAppsCache()
-        ctx.logOperation('admin', `服务控制 [${action}]`, serviceName)
+        ctx.logOperation(ctx.currentUser(), `服务控制 [${action}]`, serviceName)
         res.json(null, `服务 [${serviceName}] 已成功${action === 'start' ? '启动' : action === 'stop' ? '停止' : action === 'restart' ? '重启' : '重载'}`)
       } else {
         res.json(null, child.stderr || `操作服务失败`, 500)
@@ -978,7 +978,7 @@ export async function handleApps(pathname, req, res, url, ctx) {
         ctx.saveJSON('/var/lib/armguard/warp_config.json', warpConfig)
       }
 
-      ctx.logOperation('admin', `保存可视化配置 [${appKey}]`, 'AppStore')
+      ctx.logOperation(ctx.currentUser(), `保存可视化配置 [${appKey}]`, 'AppStore')
       res.json(null, '配置已成功保存并生效')
       return true
     } catch (e) {
@@ -1024,7 +1024,7 @@ export async function handleApps(pathname, req, res, url, ctx) {
         execSync('fail2ban-client reload 2>/dev/null || true')
       }
 
-      ctx.logOperation('admin', `编辑底层配置文件 [${appKey}]`, targetPath)
+      ctx.logOperation(ctx.currentUser(), `编辑底层配置文件 [${appKey}]`, targetPath)
       res.json(null, '原生配置文件已保存并热重载生效')
       return true
     } catch (e) {
@@ -1045,7 +1045,7 @@ export async function handleApps(pathname, req, res, url, ctx) {
     try {
       execSync(`update-alternatives --set php ${targetBin} 2>&1`)
       invalidateMarketAppsCache()
-      ctx.logOperation('admin', '切换全局 CLI PHP 版本', `PHP ${targetVersion}`)
+      ctx.logOperation(ctx.currentUser(), '切换全局 CLI PHP 版本', `PHP ${targetVersion}`)
       res.json(null, `已成功将系统全局 CLI PHP 切换为 PHP ${targetVersion}`)
     } catch (err) {
       res.json(null, `切换版本失败: ${err.message}`, 500)
@@ -1232,7 +1232,7 @@ export async function handleApps(pathname, req, res, url, ctx) {
         const successMsg = `🎉 数据库已平滑切换为 ${targetEngine === 'mysql' ? 'MySQL 8.0' : 'MariaDB 10.11'} 并正常提供服务！`
         task.logs.push(successMsg)
         task.log_tail = successMsg
-        ctx.logOperation('admin', '平滑切换数据库版本', `${currentEngine} -> ${targetEngine}`)
+        ctx.logOperation(ctx.currentUser(), '平滑切换数据库版本', `${currentEngine} -> ${targetEngine}`)
       } catch (err) {
         task.stage = 'failed'
         task.error_message = err.message
@@ -1259,7 +1259,7 @@ export async function handleApps(pathname, req, res, url, ctx) {
       const safePwd = newPwd.replace(/\\/g, '\\\\').replace(/'/g, "\\'")
       const sql = `ALTER USER 'root'@'localhost' IDENTIFIED BY '${safePwd}'; FLUSH PRIVILEGES;`
       spawnSync(cli, ['-e', sql])
-      ctx.logOperation('admin', '修改 MySQL Root 密码', '安全加固')
+      ctx.logOperation(ctx.currentUser(), '修改 MySQL Root 密码', '安全加固')
       res.json(null, 'MySQL root 密码已成功修改并生效！')
     } catch (err) {
       res.json(null, `修改密码失败: ${err.message}`, 500)

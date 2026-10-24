@@ -34,9 +34,9 @@
               <span class="text-[9px] px-1.5 py-0.2 rounded-full bg-brand-500/20 text-brand-300 font-mono border border-brand-500/30">ARM64</span>
             </div>
             <div class="text-[10px] text-slate-400 font-mono mt-0.5 flex items-center gap-2">
-              <span>CPU: {{ systemStore.realtime.cpu.percent.toFixed(0) }}%</span>
-              <span>RAM: {{ systemStore.realtime.memory.percent.toFixed(0) }}%</span>
-              <span>{{ systemStore.armThermal.temp_c ? systemStore.armThermal.temp_c.toFixed(0) + '°C' : '38°C' }}</span>
+              <span>CPU: {{ systemStore.realtime.cpu.percent !== null ? systemStore.realtime.cpu.percent.toFixed(0) + '%' : '--' }}</span>
+              <span>RAM: {{ systemStore.realtime.memory.percent !== null ? systemStore.realtime.memory.percent.toFixed(0) + '%' : '--' }}</span>
+              <span>{{ systemStore.armThermal.temp_c !== null && systemStore.armThermal.temp_c !== undefined ? systemStore.armThermal.temp_c.toFixed(0) + '°C' : '--' }}</span>
             </div>
           </div>
         </div>
@@ -112,7 +112,7 @@
             </div>
             <div class="p-3 rounded-2xl bg-slate-900 border border-slate-800 text-slate-200 leading-relaxed max-w-[85%]">
               <template v-if="aiConfig.is_configured">
-                你好！我是由 <strong>{{ aiConfig.model || '大模型' }}</strong> 驱动的 <strong>ARM Linux 专属智能运维伴侣</strong>。已深度感知当前服务器运行环境（CPU: {{ systemStore.realtime.cpu.percent.toFixed(0) }}%、内存占用 {{ systemStore.realtime.memory.percent.toFixed(0) }}%），请随时向我提问！
+                你好！我是由 <strong>{{ aiConfig.model || '大模型' }}</strong> 驱动的 <strong>ARM Linux 专属智能运维伴侣</strong>。已深度感知当前服务器运行环境（CPU: {{ systemStore.realtime.cpu.percent === null ? '采集待就绪' : `${systemStore.realtime.cpu.percent.toFixed(0)}%` }}、内存占用 {{ systemStore.realtime.memory.percent === null ? '采集待就绪' : `${systemStore.realtime.memory.percent.toFixed(0)}%` }}），请随时向我提问！
               </template>
               <template v-else>
                 你好！当前正在以 <strong>【本地专家规则模式】</strong> 运行，已内置基础状态与常用 Linux 命令库。若需获得由大模型驱动的深度排障与代码生成能力，建议前往「系统设置-管理员与凭证」配置大模型 API。

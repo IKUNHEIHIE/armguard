@@ -1,17 +1,21 @@
 import http from 'http'
 import https from 'https'
+import net from 'net'
 import fs from 'fs'
 import path from 'path'
 import os from 'os'
 import zlib from 'zlib'
 import crypto from 'crypto'
+import { AsyncLocalStorage } from 'async_hooks'
 import { spawn, spawnSync, exec, execFile, execSync } from 'child_process'
 import { fileURLToPath } from 'url'
 import { WebSocketServer } from 'ws'
 
+import { hashPassword, verifyPassword, safeEqual, ensureInitialAdmin, writeFileAtomic, INITIAL_PASSWORD_FILENAME } from './lib/security.js'
+
 // Route Handlers
 import { handleAuth } from './routes/auth.js'
-import { handleSystem, cachedTelemetry, cachedThermal, getRealProcesses, getRealMemStats, getRealDiskStats, getRealCPUPercent } from './routes/system.js'
+import { handleSystem, getTelemetry, getThermal, buildMonitorPayload, configureMonitoring, getMonitorPolicy, getRealProcesses, getRealMemStats, getRealDiskStats, getRealCPUPercent } from './routes/system.js'
 import { handleFiles, isProtectedPath } from './routes/files.js'
 import { handleSites } from './routes/sites.js'
 import { handleDatabases } from './routes/databases.js'
@@ -35,7 +39,14 @@ try {
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
-const PORT = process.env.PORT || 8888
+let PANEL_VERSION = 'v0.1.0-alpha'
+try {
+  const pkg = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../package.json'), 'utf8'))
+  if (pkg.version) PANEL_VERSION = `v${pkg.version}`
+} catch {}
+
+const HOST = process.env.HOST || '::'
+const DEFAULT_PORT = 8888
 let DIST_DIR = path.resolve(__dirname, '../dist')
 if (!fs.existsSync(DIST_DIR)) {
   DIST_DIR = path.resolve(__dirname, '../frontend/dist')
@@ -64,7 +75,7 @@ function getStaticFile(filePath) {
 }
 
 // Persistent Storage Directories
-const DATA_DIR = '/var/lib/armguard'
+const DATA_DIR = process.env.ARMGUARD_DATA_DIR || '/var/lib/armguard'
 const USERS_FILE = path.join(DATA_DIR, 'users.json')
 const SITES_FILE = path.join(DATA_DIR, 'sites.json')
 const DATABASES_FILE = path.join(DATA_DIR, 'databases.json')
@@ -73,7 +84,8 @@ const CRONTAB_FILE = path.join(DATA_DIR, 'crontab.json')
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json')
 const AI_CONFIG_FILE = path.join(DATA_DIR, 'ai_config.json')
 const OPS_LOG_FILE = path.join(DATA_DIR, 'operations.json')
-const BACKUP_DIR = '/var/backups/armguard'
+const RUNTIME_FILE = path.join(DATA_DIR, 'runtime.json')
+const BACKUP_DIR = process.env.ARMGUARD_BACKUP_DIR || '/var/backups/armguard'
 const SSL_DIR = '/etc/ssl/armguard'
 const NGINX_CONF_DIR = '/etc/nginx/conf.d'
 const STREAM_CONF_DIR = '/etc/nginx/stream.d'
@@ -81,13 +93,13 @@ const STREAM_RULES_FILE = path.join(DATA_DIR, 'stream_rules.json')
 const WWW_ROOT = '/www/wwwroot'
 
 try {
-  fs.mkdirSync(DATA_DIR, { recursive: true })
-  fs.mkdirSync(BACKUP_DIR, { recursive: true })
-  fs.mkdirSync(SSL_DIR, { recursive: true })
-  fs.mkdirSync(WWW_ROOT, { recursive: true })
-  fs.mkdirSync(NGINX_CONF_DIR, { recursive: true })
-  fs.mkdirSync(STREAM_CONF_DIR, { recursive: true })
-} catch {}
+  fs.mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 })
+} catch (err) {
+  console.error(`[ArmGuard] Cannot create data directory ${DATA_DIR}: ${err.message}`)
+}
+for (const dir of [BACKUP_DIR, SSL_DIR, WWW_ROOT, NGINX_CONF_DIR, STREAM_CONF_DIR]) {
+  try { fs.mkdirSync(dir, { recursive: true }) } catch {}
+}
 
 function loadJSON(filePath, defaultVal = []) {
   try {
@@ -98,12 +110,23 @@ function loadJSON(filePath, defaultVal = []) {
   return defaultVal
 }
 
+const SENSITIVE_FILES = new Set([USERS_FILE, SETTINGS_FILE, AI_CONFIG_FILE])
+
 function saveJSON(filePath, data) {
   try {
-    fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf8')
+    writeFileAtomic(filePath, JSON.stringify(data, null, 2), SENSITIVE_FILES.has(filePath) ? 0o600 : 0o644)
+    return true
   } catch (err) {
-    console.error('Failed to save JSON:', filePath, err)
+    console.error('Failed to save JSON:', filePath, err.message)
+    return false
   }
+}
+
+// Per-request context (authenticated user + client IP) for audit logging
+const requestContext = new AsyncLocalStorage()
+
+function currentUser() {
+  return requestContext.getStore()?.user || 'system'
 }
 
 let cachedOpsLogs = null
@@ -116,16 +139,17 @@ function getOpsLogs() {
   return cachedOpsLogs
 }
 
-function logOperation(username, action, target, ip = '127.0.0.1', status = 'success') {
+function logOperation(username, action, target, ip = null, status = 'success') {
   if (!cachedOpsLogs) {
     cachedOpsLogs = loadJSON(OPS_LOG_FILE, [])
   }
+  const store = requestContext.getStore()
   cachedOpsLogs.unshift({
     id: Date.now(),
-    username,
+    username: username || store?.user || 'system',
     action,
     target,
-    ip,
+    ip: ip || store?.ip || '127.0.0.1',
     user_agent: 'ArmGuard Web Client',
     status,
     created_at: new Date().toLocaleString()
@@ -139,45 +163,37 @@ function logOperation(username, action, target, ip = '127.0.0.1', status = 'succ
   }, 1000)
 }
 
-// Secure Password Hashing & Verification
-const PBKDF2_ITERATIONS = 100000
-
-function hashPassword(password, salt = null, iterations = PBKDF2_ITERATIONS) {
-  if (!salt) {
-    salt = crypto.randomBytes(16).toString('hex')
-  }
-  const hash = crypto.pbkdf2Sync(password, salt, iterations, 64, 'sha512').toString('hex')
-  return `${salt}:${hash}:${iterations}`
-}
-
-function verifyPassword(password, storedHash) {
-  if (!password || !storedHash) return false
-  if (!storedHash.includes(':')) {
-    const sha = crypto.createHash('sha256').update(password).digest('hex')
-    return sha === storedHash || password === storedHash
-  }
-  try {
-    const parts = storedHash.split(':')
-    const salt = parts[0]
-    const hash = parts[1]
-    const iterations = parts.length >= 3 ? parseInt(parts[2], 10) : 10000
-    if (!salt || !hash || isNaN(iterations)) return false
-    const calculated = crypto.pbkdf2Sync(password, salt, iterations, 64, 'sha512').toString('hex')
-    return crypto.timingSafeEqual(Buffer.from(hash, 'hex'), Buffer.from(calculated, 'hex'))
-  } catch {
-    return false
-  }
-}
-
+// -----------------------------------------------------------------------------
+// Sessions (AG-009 idle timeout / AG-011 real identity)
+// -----------------------------------------------------------------------------
+const SESSION_ABSOLUTE_MS = 24 * 3600 * 1000
 const activeSessions = new Map()
 
-function generateSessionToken(username = 'admin') {
+function clampInt(value, min, max, def) {
+  const n = parseInt(value, 10)
+  if (!Number.isFinite(n)) return def
+  return Math.max(min, Math.min(max, n))
+}
+
+function getSessionPolicy() {
+  const idleMinutes = clampInt(settings?.session_timeout_minutes, 5, 1440, 120)
+  return { idleMinutes, idleMs: idleMinutes * 60000, absoluteMs: SESSION_ABSOLUTE_MS }
+}
+
+function primaryAdminName() {
+  const users = loadJSON(USERS_FILE, [])
+  return (Array.isArray(users) && users[0]?.username) || 'admin'
+}
+
+function generateSessionToken(username) {
   const randomBytes = crypto.randomBytes(24).toString('hex')
   const token = `ag_live_${randomBytes}`
+  const now = Date.now()
   activeSessions.set(token, {
     username,
-    createdAt: Date.now(),
-    expiresAt: Date.now() + 86400 * 1000
+    createdAt: now,
+    lastActivity: now,
+    absoluteExpiresAt: now + SESSION_ABSOLUTE_MS
   })
   return token
 }
@@ -187,36 +203,145 @@ function revokeSessionToken(token) {
   return activeSessions.delete(token)
 }
 
-function isValidToken(token) {
-  if (!token) return false
-  const session = activeSessions.get(token)
-  if (session && session.expiresAt > Date.now()) return true
-  const currentSettings = loadJSON(SETTINGS_FILE, null)
-  if (currentSettings && currentSettings.api_token && token === currentSettings.api_token) {
-    return true
+/** Rename the identity on all live sessions (admin username change). */
+function renameSessions(oldName, newName) {
+  for (const s of activeSessions.values()) {
+    if (s.username === oldName) s.username = newName
   }
-  return false
+}
+
+/** Revoke every session of a user except `keepToken` (password change). */
+function revokeUserSessions(username, keepToken = null) {
+  let n = 0
+  for (const [tok, s] of activeSessions.entries()) {
+    if (s.username === username && tok !== keepToken) {
+      activeSessions.delete(tok)
+      n++
+    }
+  }
+  return n
+}
+
+/**
+ * Resolve a token to a session. Returns null when unknown/expired.
+ * `touch` updates the idle-timeout clock (only for genuine user activity).
+ */
+function getSession(token, { touch = true } = {}) {
+  if (!token) return null
+  const s = activeSessions.get(token)
+  if (s) {
+    const now = Date.now()
+    const { idleMs } = getSessionPolicy()
+    if (now > s.absoluteExpiresAt || now - s.lastActivity > idleMs) {
+      activeSessions.delete(token)
+      return null
+    }
+    if (touch) s.lastActivity = now
+    return { token, type: 'session', username: s.username, expiresAt: Math.min(s.absoluteExpiresAt, s.lastActivity + idleMs) }
+  }
+  const apiToken = settings?.api_token
+  if (apiToken && safeEqual(token, apiToken)) {
+    return { token, type: 'api_token', username: primaryAdminName(), expiresAt: null }
+  }
+  return null
+}
+
+function isValidToken(token) {
+  return Boolean(getSession(token, { touch: false }))
+}
+
+setInterval(() => {
+  const now = Date.now()
+  const { idleMs } = getSessionPolicy()
+  for (const [tok, s] of activeSessions.entries()) {
+    if (now > s.absoluteExpiresAt || now - s.lastActivity > idleMs) activeSessions.delete(tok)
+  }
+  for (const [t, rec] of downloadTickets.entries()) {
+    if (rec.expiresAt < now) downloadTickets.delete(t)
+  }
+}, 60 * 1000).unref()
+
+// -----------------------------------------------------------------------------
+// Short-lived, single-use download tickets (AG-007)
+// Long-lived session tokens never appear in download URLs.
+// -----------------------------------------------------------------------------
+const DOWNLOAD_TICKET_TTL_MS = 60 * 1000
+const DOWNLOAD_PATHS = new Set([
+  '/api/v1/files/download',
+  '/api/v1/databases/backup/download',
+  '/api/v1/settings/backup/download'
+])
+const downloadTickets = new Map()
+
+function canonicalQuery(searchParams) {
+  const copy = new URLSearchParams(searchParams)
+  copy.delete('dl_ticket')
+  copy.delete('token')
+  copy.sort()
+  return copy.toString()
+}
+
+function createDownloadTicket(target, username) {
+  let parsed
+  try {
+    parsed = new URL(String(target || ''), 'http://armguard.local')
+  } catch {
+    return null
+  }
+  if (!DOWNLOAD_PATHS.has(parsed.pathname)) return null
+  const query = canonicalQuery(parsed.searchParams)
+  const ticket = crypto.randomBytes(24).toString('hex')
+  const expiresAt = Date.now() + DOWNLOAD_TICKET_TTL_MS
+  downloadTickets.set(ticket, { pathname: parsed.pathname, query, username, expiresAt })
+  const sep = query ? '&' : ''
+  return { url: `${parsed.pathname}?${query}${sep}dl_ticket=${ticket}`, expires_in: DOWNLOAD_TICKET_TTL_MS / 1000 }
+}
+
+function consumeDownloadTicket(req, url) {
+  if (req.method !== 'GET' && req.method !== 'HEAD') return null
+  const ticket = url.searchParams.get('dl_ticket')
+  if (!ticket) return null
+  const rec = downloadTickets.get(ticket)
+  if (!rec) return null
+  if (rec.expiresAt < Date.now()) {
+    downloadTickets.delete(ticket)
+    return null
+  }
+  if (rec.pathname !== url.pathname || rec.query !== canonicalQuery(url.searchParams)) return null
+  if (req.method === 'GET') downloadTickets.delete(ticket) // single use
+  return { token: null, type: 'download_ticket', username: rec.username, expiresAt: rec.expiresAt }
 }
 
 function isValidDomain(domain) {
   return /^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/.test(domain)
 }
 
-function checkAuth(req, res, url = null) {
-  const authHeader = req.headers['authorization'] || ''
-  let token = ''
-  if (authHeader.startsWith('Bearer ')) {
-    token = authHeader.substring(7).trim()
-  } else if (req.headers['x-api-token']) {
-    token = req.headers['x-api-token'].toString().trim()
-  }
+// Telemetry polling must not keep an idle session alive forever
+const PASSIVE_ENDPOINTS = new Set([
+  '/api/v1/system/monitor/realtime',
+  '/api/v1/system/hardware/thermal'
+])
 
-  if (!token || !isValidToken(token)) {
-    res.writeHead(401, { 'Content-Type': 'application/json; charset=utf-8' })
-    res.end(JSON.stringify({ code: 401, message: '未授权：请先登录或提供有效的 Token' }))
-    return false
+function extractRequestToken(req) {
+  const authHeader = req.headers['authorization'] || ''
+  if (authHeader.startsWith('Bearer ')) return authHeader.substring(7).trim()
+  if (req.headers['x-api-token']) return req.headers['x-api-token'].toString().trim()
+  return ''
+}
+
+/** Returns the authenticated session or null (after writing a 401). */
+function checkAuth(req, res, url) {
+  const token = extractRequestToken(req)
+  let session = token ? getSession(token, { touch: !PASSIVE_ENDPOINTS.has(url.pathname) }) : null
+  if (!session && !token) {
+    session = consumeDownloadTicket(req, url)
   }
-  return true
+  if (!session) {
+    res.writeHead(401, { 'Content-Type': 'application/json; charset=utf-8' })
+    res.end(JSON.stringify({ code: 401, message: '未授权：请先登录或提供有效的 Token（会话可能已超时）' }))
+    return null
+  }
+  return session
 }
 
 // Request Body Parser
@@ -394,19 +519,24 @@ if (crontabs.length === 0) {
   } catch {}
 }
 
-let settings = loadJSON(SETTINGS_FILE, {
-  port: 8888,
+const SETTINGS_DEFAULTS = {
+  port: DEFAULT_PORT,
   security_entrance: '/armguard',
   ssl_enabled: false,
+  panel_ssl_cert: '',
+  panel_ssl_key: '',
   session_timeout_minutes: 120,
+  max_login_retry: 5,
+  login_lock_minutes: 15,
   eco_mode_enabled: true,
   eco_mode_threshold_mb: 512,
-  current_version: 'v0.1.0-alpha',
-  latest_version: 'v0.1.0-alpha',
-  has_update: false,
   timezone: 'Asia/Shanghai',
   hostname: os.hostname()
-})
+}
+
+// Defaults are merged so that upgrades pick up new keys without losing saved values
+let settings = { ...SETTINGS_DEFAULTS, ...loadJSON(SETTINGS_FILE, {}) }
+configureMonitoring(() => settings)
 
 let aiConfig = loadJSON(AI_CONFIG_FILE, DEFAULT_AI_CONFIG)
 
@@ -463,24 +593,107 @@ function getClientIp(req, currentSettings = null) {
   return socketIp
 }
 
+// -----------------------------------------------------------------------------
+// Listen port / protocol resolution (AG-009 HTTPS, AG-010 port)
+// Priority: PORT env > saved settings.port > 8888. Saved changes apply on restart.
+// -----------------------------------------------------------------------------
+function isValidPort(p) {
+  return Number.isInteger(p) && p >= 1 && p <= 65535
+}
+
+function resolveListenPort() {
+  if (process.env.PORT) {
+    const p = parseInt(process.env.PORT, 10)
+    if (isValidPort(p)) return { port: p, source: 'env' }
+    console.error(`[ArmGuard] Ignoring invalid PORT env value: ${process.env.PORT}`)
+  }
+  const saved = parseInt(settings.port, 10)
+  if (isValidPort(saved)) return { port: saved, source: 'settings' }
+  return { port: DEFAULT_PORT, source: 'default' }
+}
+
+/** Validate a certificate/key pair for the panel's own HTTPS listener. */
+function validatePanelTls(certPath, keyPath) {
+  if (!certPath || !keyPath) return { ok: false, error: '必须同时提供证书 (PEM) 与私钥 (PEM) 的文件路径' }
+  if (!path.isAbsolute(certPath) || !path.isAbsolute(keyPath)) return { ok: false, error: '证书与私钥必须使用绝对路径' }
+  let certPem, keyPem
+  try {
+    certPem = fs.readFileSync(certPath)
+    keyPem = fs.readFileSync(keyPath)
+  } catch (e) {
+    return { ok: false, error: `无法读取证书或私钥: ${e.message}` }
+  }
+  try {
+    const x509 = new crypto.X509Certificate(certPem)
+    const key = crypto.createPrivateKey(keyPem)
+    if (!x509.checkPrivateKey(key)) return { ok: false, error: '私钥与证书不匹配' }
+    const validTo = new Date(x509.validTo)
+    const validFrom = new Date(x509.validFrom)
+    const now = new Date()
+    if (validTo < now) return { ok: false, error: `证书已于 ${validTo.toISOString()} 过期` }
+    if (validFrom > now) return { ok: false, error: `证书尚未生效 (生效时间 ${validFrom.toISOString()})` }
+    return {
+      ok: true, cert: certPem, key: keyPem,
+      subject: x509.subject, issuer: x509.issuer, valid_to: validTo.toISOString(),
+      self_signed: x509.subject === x509.issuer
+    }
+  } catch (e) {
+    return { ok: false, error: `证书或私钥格式无效: ${e.message}` }
+  }
+}
+
+const listenPlan = resolveListenPort()
+const runtime = {
+  pid: process.pid,
+  host: HOST,
+  port: listenPlan.port,
+  port_source: listenPlan.source,
+  protocol: 'http',
+  ssl_error: null,
+  started_at: new Date().toISOString(),
+  version: PANEL_VERSION
+}
+
+let tlsOptions = null
+if (settings.ssl_enabled) {
+  if (process.env.ARMGUARD_FORCE_HTTP === '1') {
+    runtime.ssl_error = 'ARMGUARD_FORCE_HTTP=1：本机恢复模式，已强制使用 HTTP'
+  } else {
+    const tls = validatePanelTls(settings.panel_ssl_cert, settings.panel_ssl_key)
+    if (tls.ok) {
+      tlsOptions = { cert: tls.cert, key: tls.key }
+      runtime.protocol = 'https'
+    } else {
+      runtime.ssl_error = tls.error
+      console.error(`[ArmGuard] Panel HTTPS is enabled in settings but cannot be used: ${tls.error}. Falling back to HTTP.`)
+    }
+  }
+}
+
 // Shared Application Context Object
 const ctx = {
   DATA_DIR, USERS_FILE, SITES_FILE, DATABASES_FILE, CERTS_FILE, CRONTAB_FILE,
   SETTINGS_FILE, AI_CONFIG_FILE, OPS_LOG_FILE, BACKUP_DIR, SSL_DIR, NGINX_CONF_DIR, WWW_ROOT,
-  STREAM_RULES_FILE, STREAM_CONF_DIR,
-  sites, databases, sslCerts, crontabs, streamRules, settings, aiConfig,
-  loadJSON, saveJSON, getOpsLogs, logOperation, hashPassword, verifyPassword,
-  generateSessionToken, revokeSessionToken, isValidToken, isValidDomain, parseBody, parseMultipart,
-  isProtectedPath, staticCache, getStaticFile, getClientIp,
-  cachedTelemetry, cachedThermal, getRealProcesses, getRealMemStats, getRealDiskStats, getRealCPUPercent
+  STREAM_RULES_FILE, STREAM_CONF_DIR, PANEL_VERSION, INITIAL_PASSWORD_FILE: path.join(DATA_DIR, INITIAL_PASSWORD_FILENAME),
+  sites, databases, sslCerts, crontabs, streamRules, settings, aiConfig, runtime,
+  loadJSON, saveJSON, getOpsLogs, logOperation, hashPassword, verifyPassword, currentUser,
+  generateSessionToken, revokeSessionToken, isValidToken, getSession, getSessionPolicy, renameSessions, revokeUserSessions,
+  createDownloadTicket, extractRequestToken, validatePanelTls, isValidPort,
+  isValidDomain, parseBody, parseMultipart,
+  isProtectedPath, staticCache, getStaticFile, getClientIp, getMonitorPolicy,
+  get cachedTelemetry() { return getTelemetry() },
+  get cachedThermal() { return getThermal() },
+  getRealProcesses, getRealMemStats, getRealDiskStats, getRealCPUPercent
 }
 
 initWarpConfig(ctx)
 
-// HTTP Server
-const server = http.createServer(async (req, res) => {
+// HTTP(S) request handler
+async function handleHttpRequest(req, res) {
   const currentSettings = loadJSON(SETTINGS_FILE, settings)
   const clientIp = getClientIp(req, currentSettings)
+  const reqStore = requestContext.getStore()
+  if (reqStore) reqStore.ip = clientIp
 
   // 1. IP Whitelist Enforcement
   if (!isIpAllowed(clientIp, currentSettings.ip_whitelist)) {
@@ -523,7 +736,7 @@ const server = http.createServer(async (req, res) => {
   // 3. Security Entrance Handling (e.g. /armguard)
   if (secEntrance && secEntrance !== '/' && (pathname === secEntrance || pathname === `${secEntrance}/`)) {
     res.writeHead(302, {
-      'Set-Cookie': 'ag_entrance=1; Path=/; HttpOnly; SameSite=Lax',
+      'Set-Cookie': `ag_entrance=1; Path=/; HttpOnly; SameSite=Lax${runtime.protocol === 'https' ? '; Secure' : ''}`,
       'Location': '/'
     })
     res.end()
@@ -555,9 +768,12 @@ const server = http.createServer(async (req, res) => {
     }
 
     // Authentication Enforcement Middleware
-    if (!checkAuth(req, res, url)) {
+    const session = checkAuth(req, res, url)
+    if (!session) {
       return
     }
+    req.session = session
+    if (reqStore) reqStore.user = session.username
 
     // 3. Modular Business Route Pipeline
     if (await handleAuth(pathname, req, res, url, ctx)) return
@@ -653,159 +869,309 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, headers)
     res.end(fileData.raw)
   }
+}
+
+// -----------------------------------------------------------------------------
+// HTTP / HTTPS server
+// -----------------------------------------------------------------------------
+function requestListener(req, res) {
+  requestContext.run({ user: null, ip: null }, () => {
+    handleHttpRequest(req, res).catch(err => {
+      console.error('[ArmGuard] Unhandled request error:', err)
+      if (!res.headersSent) {
+        res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify({ code: 500, message: `服务器内部错误: ${err.message}`, data: null }))
+      } else {
+        try { res.end() } catch {}
+      }
+    })
+  })
+}
+
+const server = tlsOptions ? https.createServer(tlsOptions, requestListener) : http.createServer(requestListener)
+
+// -----------------------------------------------------------------------------
+// WebSocket Server with strict handshake authentication (AG-006)
+// Token is passed via the Sec-WebSocket-Protocol header: ['armguard.v1', <token>]
+// -----------------------------------------------------------------------------
+const WS_PROTOCOL = 'armguard.v1'
+const WS_PATHS = new Set(['/terminal/ws', '/system/monitor/ws'])
+
+const wss = new WebSocketServer({
+  noServer: true,
+  handleProtocols: (protocols) => {
+    if (protocols.has(WS_PROTOCOL)) return WS_PROTOCOL
+    return false
+  }
 })
 
-// WebSocket Server with strict handshake authentication
-const wss = new WebSocketServer({ noServer: true })
+function rejectUpgrade(socket, status, text) {
+  try {
+    socket.write(`HTTP/1.1 ${status} ${text}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`)
+  } catch {}
+  socket.destroy()
+}
 
 server.on('upgrade', (req, socket, head) => {
-  const currentSettings = loadJSON(SETTINGS_FILE, settings)
-  const clientIp = getClientIp(req, currentSettings)
+  try {
+    const currentSettings = loadJSON(SETTINGS_FILE, settings)
+    const clientIp = getClientIp(req, currentSettings)
 
-  // 1. Enforce IP Whitelist on WebSocket handshake
-  if (!isIpAllowed(clientIp, currentSettings.ip_whitelist)) {
-    socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n')
-    socket.destroy()
-    return
+    // 1. Enforce IP Whitelist on WebSocket handshake
+    if (!isIpAllowed(clientIp, currentSettings.ip_whitelist)) {
+      return rejectUpgrade(socket, 403, 'Forbidden')
+    }
+
+    // 2. Enforce Security Entrance on WebSocket handshake
+    const secEntrance = (currentSettings.security_entrance || '').trim()
+    const cookies = parseCookies(req)
+    const hasEntranceCookie = cookies['ag_entrance'] === '1'
+    if (secEntrance && secEntrance !== '/' && !hasEntranceCookie) {
+      return rejectUpgrade(socket, 404, 'Not Found')
+    }
+
+    const url = new URL(req.url, `http://${req.headers.host || '127.0.0.1'}`)
+    if (!WS_PATHS.has(url.pathname)) {
+      return rejectUpgrade(socket, 404, 'Not Found')
+    }
+
+    // 3. Enforce Token authentication on WebSocket handshake
+    let session = null
+    const authHeader = req.headers['authorization'] || ''
+    if (authHeader.startsWith('Bearer ')) {
+      session = getSession(authHeader.substring(7).trim(), { touch: false })
+    }
+    if (!session && req.headers['sec-websocket-protocol']) {
+      const offered = req.headers['sec-websocket-protocol'].split(',').map(s => s.trim()).filter(Boolean)
+      for (const candidate of offered) {
+        if (candidate === WS_PROTOCOL) continue
+        session = getSession(candidate, { touch: false })
+        if (session) break
+      }
+    }
+    if (!session) {
+      const queryToken = (url.searchParams.get('token') || '').trim()
+      if (queryToken) session = getSession(queryToken, { touch: false })
+    }
+
+    if (!session) {
+      return rejectUpgrade(socket, 401, 'Unauthorized')
+    }
+
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      wss.emit('connection', ws, req, session)
+    })
+  } catch (err) {
+    console.error('[ArmGuard] WebSocket upgrade error:', err.message)
+    rejectUpgrade(socket, 500, 'Internal Server Error')
   }
+})
 
-  // 2. Enforce Security Entrance on WebSocket handshake
-  const secEntrance = (currentSettings.security_entrance || '').trim()
-  const cookies = parseCookies(req)
-  const hasEntranceCookie = cookies['ag_entrance'] === '1'
-  if (secEntrance && secEntrance !== '/' && !hasEntranceCookie) {
-    socket.write('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n')
-    socket.destroy()
-    return
-  }
+wss.on('error', err => console.error('[ArmGuard] WebSocket server error:', err.message))
 
-  const url = new URL(req.url, `http://${req.headers.host || '127.0.0.1'}`)
-  if (url.pathname !== '/terminal/ws') {
-    socket.write('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n')
-    socket.destroy()
-    return
-  }
+/** Close the socket when the backing session expires or is revoked (logout). */
+function watchSession(ws, session, onExpire) {
+  const timer = setInterval(() => {
+    if (ws.readyState !== 1) return
+    if (!getSession(session.token, { touch: false })) {
+      try { ws.close(4001, 'Session expired') } catch {}
+      onExpire?.()
+    }
+  }, 15000)
+  timer.unref?.()
+  return () => clearInterval(timer)
+}
 
-  // 3. Enforce Token authentication on WebSocket handshake
-  let token = url.searchParams.get('token') || ''
-  const authHeader = req.headers['authorization'] || ''
-  if (authHeader.startsWith('Bearer ')) {
-    token = authHeader.substring(7).trim()
-  } else if (req.headers['sec-websocket-protocol']) {
-    const protoToken = req.headers['sec-websocket-protocol'].split(',')[0].trim()
-    if (isValidToken(protoToken)) {
-      token = protoToken
+function handleTerminal(ws) {
+  const cwd = fs.existsSync('/root') ? '/root' : os.homedir()
+  if (pty) {
+    let ptyProcess = pty.spawn('/bin/bash', [], {
+      name: 'xterm-256color',
+      cols: 80,
+      rows: 24,
+      cwd,
+      env: process.env
+    })
+
+    ptyProcess.onData(data => {
+      if (ws.readyState === 1) ws.send(data)
+    })
+
+    ws.on('message', msg => {
+      const str = msg.toString()
+      try {
+        if (str.startsWith('{') && str.endsWith('}')) {
+          const parsed = JSON.parse(str)
+          if (parsed.type === 'resize' && parsed.cols && parsed.rows) {
+            ptyProcess?.resize(parsed.cols, parsed.rows)
+            return
+          }
+        }
+      } catch {}
+      if (ptyProcess) ptyProcess.write(str)
+    })
+
+    return () => {
+      if (ptyProcess) {
+        try { ptyProcess.kill() } catch {}
+        ptyProcess = null
+      }
     }
   }
 
-  if (!token || !isValidToken(token)) {
-    socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n')
-    socket.destroy()
-    return
-  }
-
-  wss.handleUpgrade(req, socket, head, (ws) => {
-    wss.emit('connection', ws, req)
+  const shell = spawn('/bin/bash', ['-i'], {
+    cwd,
+    env: { ...process.env, TERM: 'xterm-256color' }
   })
-})
+  const forward = data => { if (ws.readyState === 1) ws.send(data.toString()) }
+  shell.stdout.on('data', forward)
+  shell.stderr.on('data', forward)
+  shell.on('error', err => forward(`\r\n[ArmGuard Terminal Error]: ${err.message}\r\n`))
+  shell.on('exit', () => { try { ws.close(1000, 'Shell exited') } catch {} })
+  ws.on('message', msg => {
+    const str = msg.toString()
+    if (!str.startsWith('{"type":"resize"') && shell.stdin.writable) {
+      shell.stdin.write(str)
+    }
+  })
+  return () => {
+    try { shell.kill() } catch {}
+  }
+}
 
-wss.on('connection', (ws, req) => {
-  const url = new URL(req.url, `http://${req.headers.host || '127.0.0.1'}`)
-  const pathname = url.pathname
+function handleMonitor(ws) {
+  let timer = null
+  let stopped = false
 
-  if (pathname === '/terminal/ws') {
-
+  const send = () => {
+    if (stopped || ws.readyState !== 1) return
     try {
-      if (pty) {
-        let ptyProcess = pty.spawn('/bin/bash', [], {
-          name: 'xterm-256color',
-          cols: 80,
-          rows: 24,
-          cwd: '/root',
-          env: process.env
-        })
-
-        ptyProcess.onData(data => {
-          if (ws.readyState === 1) ws.send(data)
-        })
-
-        ws.on('message', msg => {
-          const str = msg.toString()
-          try {
-            if (str.startsWith('{') && str.endsWith('}')) {
-              const parsed = JSON.parse(str)
-              if (parsed.type === 'resize' && parsed.cols && parsed.rows) {
-                ptyProcess.resize(parsed.cols, parsed.rows)
-                return
-              }
-            }
-          } catch {}
-          if (ptyProcess) ptyProcess.write(str)
-        })
-
-        const cleanupPty = () => {
-          if (ptyProcess) {
-            try { ptyProcess.kill() } catch {}
-            ptyProcess = null
-          }
-        }
-        ws.on('close', cleanupPty)
-        ws.on('error', cleanupPty)
-      } else {
-        const shell = spawn('/bin/bash', ['-i'], {
-          cwd: '/root',
-          env: { ...process.env, TERM: 'xterm-256color' }
-        })
-        shell.stdout.on('data', data => ws.send(data.toString()))
-        shell.stderr.on('data', data => ws.send(data.toString()))
-        ws.on('message', msg => {
-          const str = msg.toString()
-          if (!str.startsWith('{"type":"resize"')) {
-            shell.stdin.write(str)
-          }
-        })
-        const cleanupShell = () => {
-          try { shell.kill() } catch {}
-        }
-        ws.on('close', cleanupShell)
-        ws.on('error', cleanupShell)
-      }
-    } catch (e) {
-      ws.send(`\r\n[ArmGuard Terminal Error]: ${e.message}\r\n`)
+      ws.send(JSON.stringify(buildMonitorPayload()))
+    } catch (err) {
+      console.error('[ArmGuard] monitor push failed:', err.message)
     }
-  } else if (pathname === '/system/monitor/ws') {
-    if (!isValidToken(token)) {
-      ws.close(4001, 'Unauthorized')
-      return
+  }
+
+  // Re-read the policy every tick so Eco mode changes apply without reconnecting
+  const schedule = () => {
+    if (stopped) return
+    timer = setTimeout(() => {
+      send()
+      schedule()
+    }, getMonitorPolicy().interval_ms)
+  }
+
+  send()
+  schedule()
+
+  return () => {
+    stopped = true
+    if (timer) clearTimeout(timer)
+    timer = null
+  }
+}
+
+wss.on('connection', (ws, req, session) => {
+  let cleanupHandler = null
+  let stopWatch = null
+  const cleanup = () => {
+    if (stopWatch) { stopWatch(); stopWatch = null }
+    if (cleanupHandler) { try { cleanupHandler() } catch {} cleanupHandler = null }
+  }
+  ws.on('close', cleanup)
+  ws.on('error', cleanup)
+
+  try {
+    const pathname = new URL(req.url, `http://${req.headers.host || '127.0.0.1'}`).pathname
+    stopWatch = watchSession(ws, session, cleanup)
+    if (pathname === '/terminal/ws') {
+      cleanupHandler = handleTerminal(ws)
+    } else if (pathname === '/system/monitor/ws') {
+      cleanupHandler = handleMonitor(ws)
+    } else {
+      ws.close(1008, 'Unsupported path')
     }
-
-    if (ws.readyState === 1) {
-      ws.send(JSON.stringify({
-        realtime: cachedTelemetry,
-        arm_thermal: cachedThermal
-      }))
-    }
-
-    const getInterval = () => (settings.eco_mode_enabled ? 4000 : 1500)
-    let timer = setInterval(() => {
-      if (ws.readyState !== 1) {
-        clearInterval(timer)
-        return
-      }
-      ws.send(JSON.stringify({
-        realtime: cachedTelemetry,
-        arm_thermal: cachedThermal,
-        eco_mode: Boolean(settings.eco_mode_enabled)
-      }))
-    }, getInterval())
-
-    const cleanupTimer = () => clearInterval(timer)
-    ws.on('close', cleanupTimer)
-    ws.on('error', cleanupTimer)
+  } catch (e) {
+    try {
+      if (ws.readyState === 1) ws.send(`\r\n[ArmGuard Error]: ${e.message}\r\n`)
+      ws.close(1011, 'Internal error')
+    } catch {}
+    cleanup()
   }
 })
 
-server.listen(PORT, '::', () => {
-  console.log(`[ArmGuard] ✓ 100% Real Linux Engine Panel is running on [::]:${PORT}`)
-  console.log(`[ArmGuard] Default login credentials: admin / armguard`)
-})
+// -----------------------------------------------------------------------------
+// Startup: first-run admin (AG-004) + listen with port fallback (AG-010)
+// -----------------------------------------------------------------------------
+function listenOn(port) {
+  return new Promise((resolve, reject) => {
+    const onError = (err) => {
+      server.off('listening', onListening)
+      reject(err)
+    }
+    const onListening = () => {
+      server.off('error', onError)
+      resolve()
+    }
+    server.once('error', onError)
+    server.once('listening', onListening)
+    server.listen(port, HOST)
+  })
+}
+
+async function start() {
+  try {
+    const init = ensureInitialAdmin({ dataDir: DATA_DIR, usersFile: USERS_FILE })
+    if (init.created) {
+      if (init.passwordFile) {
+        console.log(`[ArmGuard] First run: administrator "${init.username}" created. Initial password stored in ${init.passwordFile} (mode 0600).`)
+      } else {
+        console.log(`[ArmGuard] First run: administrator "${init.username}" created from ARMGUARD_ADMIN_PASSWORD.`)
+      }
+    }
+  } catch (err) {
+    console.error(`[ArmGuard] Administrator initialization failed: ${err.message}`)
+    console.error('[ArmGuard] Fix or restore users.json, or run backend/scripts/reset_admin.js as root.')
+    process.exit(1)
+  }
+
+  try {
+    await listenOn(runtime.port)
+  } catch (err) {
+    const requested = runtime.port
+    const candidates = []
+    if (runtime.port_source === 'settings') {
+      const lastGood = parseInt(settings.last_good_port, 10)
+      if (isValidPort(lastGood) && lastGood !== requested) candidates.push(lastGood)
+      if (DEFAULT_PORT !== requested && !candidates.includes(DEFAULT_PORT)) candidates.push(DEFAULT_PORT)
+    }
+    let recovered = false
+    for (const p of candidates) {
+      try {
+        await listenOn(p)
+        runtime.port_error = `配置端口 ${requested} 无法监听 (${err.code || err.message})，已回退到端口 ${p}`
+        runtime.port = p
+        runtime.port_source = 'fallback'
+        recovered = true
+        console.error(`[ArmGuard] ${runtime.port_error}`)
+        break
+      } catch {}
+    }
+    if (!recovered) {
+      console.error(`[ArmGuard] Cannot listen on ${HOST}:${requested}: ${err.code || err.message}`)
+      process.exit(1)
+    }
+  }
+
+  if (runtime.port_source !== 'fallback' && runtime.port_source !== 'env' && settings.last_good_port !== runtime.port) {
+    settings.last_good_port = runtime.port
+    saveJSON(SETTINGS_FILE, settings)
+  }
+  saveJSON(RUNTIME_FILE, runtime)
+
+  const entrance = (settings.security_entrance || '').trim()
+  console.log(`[ArmGuard] ${PANEL_VERSION} listening on ${runtime.protocol}://${HOST.includes(':') ? `[${HOST}]` : HOST}:${runtime.port}${entrance && entrance !== '/' ? ` (security entrance: ${entrance})` : ''}`)
+  if (runtime.ssl_error) console.error(`[ArmGuard] HTTPS not active: ${runtime.ssl_error}`)
+}
+
+start()

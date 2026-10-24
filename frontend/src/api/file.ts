@@ -41,7 +41,7 @@ export const fileApi = {
       }
     })
   },
-  downloadFileUrl: (path: string) => `/api/v1/files/download?path=${encodeURIComponent(path)}&token=${localStorage.getItem('armguard_token') || ''}`,
+  downloadFilePath: (path: string) => `/api/v1/files/download?path=${encodeURIComponent(path)}`,
   compress: (paths: string[], targetName: string, format: 'zip' | 'tar.gz' = 'zip') => apiClient.post<ApiResponse<{ target_path: string }>>('/files/compress', { paths, target_name: targetName, format }),
   decompress: (path: string, destPath?: string) => apiClient.post<ApiResponse<void>>('/files/decompress', { path, dest_path: destPath }),
   changePermission: (path: string, mode: string, owner?: string, group?: string, recursive = false) => apiClient.put<ApiResponse<void>>('/files/permission', { path, mode, owner, group, recursive }),

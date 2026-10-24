@@ -8,7 +8,7 @@
         :temp-c="systemStore.armThermal.temp_c"
         :throttled="systemStore.armThermal.throttled"
         :under-voltage="systemStore.armThermal.under_voltage"
-        :board-model="systemStore.info?.arm_board_model || systemStore.armThermal.board_model || 'ARM Linux'"
+        :board-model="systemStore.info?.arm_board_model || systemStore.armThermal.board_model || '未知型号'"
       />
     </div>
 

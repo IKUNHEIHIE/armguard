@@ -180,7 +180,7 @@ export async function handleFiles(pathname, req, res, url, ctx) {
           return true
         }
         fs.writeFileSync(safePath, body.content || '', 'utf8')
-        ctx.logOperation('admin', '修改文件', safePath)
+        ctx.logOperation(ctx.currentUser(), '修改文件', safePath)
         res.json(null, '文件保存成功')
         return true
       } catch (e) {
@@ -204,7 +204,7 @@ export async function handleFiles(pathname, req, res, url, ctx) {
       } else {
         fs.writeFileSync(safePath, '', 'utf8')
       }
-      ctx.logOperation('admin', body.is_dir ? '新建目录' : '新建文件', safePath)
+      ctx.logOperation(ctx.currentUser(), body.is_dir ? '新建目录' : '新建文件', safePath)
       res.json(null, '创建成功')
       return true
     } catch (e) {
@@ -224,7 +224,7 @@ export async function handleFiles(pathname, req, res, url, ctx) {
           return true
         }
         fs.rmSync(safePath, { recursive: true, force: true })
-        ctx.logOperation('admin', '删除文件/目录', safePath)
+        ctx.logOperation(ctx.currentUser(), '删除文件/目录', safePath)
       }
       res.json(null, '删除成功')
       return true
@@ -279,7 +279,7 @@ export async function handleFiles(pathname, req, res, url, ctx) {
         }
         fs.writeFileSync(dest, f.data)
         uploadedPath = dest
-        ctx.logOperation('admin', '上传文件', dest)
+        ctx.logOperation(ctx.currentUser(), '上传文件', dest)
       }
       res.json({ path: uploadedPath || safeDir, count: files.length }, '文件上传成功')
       return true
@@ -315,14 +315,17 @@ export async function handleFiles(pathname, req, res, url, ctx) {
       res.writeHead(200, {
         'Content-Type': 'application/octet-stream',
         'Content-Disposition': `attachment; filename="${encodeURIComponent(filename)}"`,
-        'Content-Length': stat.size
+        'Content-Length': stat.size,
+        'Cache-Control': 'no-store'
       })
       if (req.method === 'HEAD') {
         res.end()
         return true
       }
-      fs.createReadStream(safePath).pipe(res)
-      ctx.logOperation('admin', '下载文件', safePath)
+      const stream = fs.createReadStream(safePath)
+      stream.on('error', () => res.destroy())
+      stream.pipe(res)
+      ctx.logOperation(ctx.currentUser(), '下载文件', safePath)
       return true
     } catch (e) {
       res.json(null, e.message, 500)
@@ -345,7 +348,7 @@ export async function handleFiles(pathname, req, res, url, ctx) {
     }
     try {
       fs.renameSync(oldPath, newPath)
-      ctx.logOperation('admin', '重命名文件/目录', `${oldPath} -> ${newPath}`)
+      ctx.logOperation(ctx.currentUser(), '重命名文件/目录', `${oldPath} -> ${newPath}`)
       res.json(null, '重命名成功')
       return true
     } catch (e) {
@@ -379,12 +382,14 @@ export async function handleFiles(pathname, req, res, url, ctx) {
     }
     try {
       const fileNames = paths.map(p => path.basename(path.resolve(p)))
-      if (format === 'zip') {
-        spawnSync('zip', ['-r', targetPath, ...fileNames], { cwd: parentDir })
-      } else {
-        spawnSync('tar', ['-czf', targetPath, ...fileNames], { cwd: parentDir })
+      const child = format === 'zip'
+        ? spawnSync('zip', ['-r', targetPath, ...fileNames], { cwd: parentDir, encoding: 'utf-8', timeout: 120000 })
+        : spawnSync('tar', ['-czf', targetPath, ...fileNames], { cwd: parentDir, encoding: 'utf-8', timeout: 120000 })
+      if (child.error || child.status !== 0) {
+        const reason = child.error ? child.error.message : ((child.stderr || '').trim() || `退出码 ${child.status}`)
+        throw new Error(`压缩失败: ${reason}`)
       }
-      ctx.logOperation('admin', '压缩文件', targetPath)
+      ctx.logOperation(ctx.currentUser(), '压缩文件', targetPath)
       res.json({ target_path: targetPath }, '压缩完成')
       return true
     } catch (e) {
@@ -408,12 +413,14 @@ export async function handleFiles(pathname, req, res, url, ctx) {
     }
     try {
       fs.mkdirSync(destPath, { recursive: true })
-      if (archivePath.endsWith('.zip')) {
-        spawnSync('unzip', ['-o', archivePath, '-d', destPath])
-      } else {
-        spawnSync('tar', ['-xzf', archivePath, '-C', destPath])
+      const child = archivePath.endsWith('.zip')
+        ? spawnSync('unzip', ['-o', archivePath, '-d', destPath], { encoding: 'utf-8', timeout: 120000 })
+        : spawnSync('tar', ['-xzf', archivePath, '-C', destPath], { encoding: 'utf-8', timeout: 120000 })
+      if (child.error || child.status !== 0) {
+        const reason = child.error ? child.error.message : ((child.stderr || '').trim() || `退出码 ${child.status}`)
+        throw new Error(`解压失败: ${reason}`)
       }
-      ctx.logOperation('admin', '解压文件', `${archivePath} -> ${destPath}`)
+      ctx.logOperation(ctx.currentUser(), '解压文件', `${archivePath} -> ${destPath}`)
       res.json(null, '解压完成')
       return true
     } catch (e) {

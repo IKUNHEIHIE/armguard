@@ -3,63 +3,93 @@ import apiClient, { ApiResponse } from './client'
 export interface SystemInfo {
   hostname: string
   os: string
-  distribution: string
+  distribution: string | null
   kernel: string
   arch: string
   uptime_seconds: number
-  cpu_model: string
+  cpu_model: string | null
   cpu_cores: number
   is_arm: boolean
-  arm_board_model?: string
+  arm_board_model?: string | null
   panel_version: string
-  memory_total_bytes: number
-  disk_total_bytes: number
+  memory_total_bytes: number | null
+  disk_total_bytes: number | null
+}
+
+export interface CpuFreqPolicy {
+  id: string
+  cpus: number[]
+  cur_mhz: number | null
+  min_mhz: number | null
+  max_mhz: number | null
+  hw_max_mhz: number | null
+  governor: string | null
+}
+
+export interface MonitorPolicy {
+  eco_mode_enabled: boolean
+  eco_mode_active: boolean
+  eco_mode_threshold_mb: number
+  eco_reason: string
+  interval_ms: number
+  host_cores: number
+  host_memory_mb: number
 }
 
 export interface RealtimeMonitorData {
-  timestamp: number
+  timestamp: number | null
   cpu: {
-    percent: number
-    cores_percent: number[]
-    frequency_mhz: number
+    percent: number | null
+    cores_percent: (number | null)[]
+    frequency_mhz: number | null
+    max_frequency_mhz?: number | null
+    governor?: string | null
+    policies?: CpuFreqPolicy[]
   }
   memory: {
-    total: number
-    used: number
-    free: number
-    percent: number
-    swap_total: number
-    swap_used: number
-    swap_percent: number
+    total: number | null
+    used: number | null
+    free: number | null
+    percent: number | null
+    swap_total: number | null
+    swap_used: number | null
+    swap_percent: number | null
   }
   disk: {
-    total: number
-    used: number
-    free: number
-    percent: number
-    read_bytes_sec: number
-    write_bytes_sec: number
+    total: number | null
+    used: number | null
+    free: number | null
+    percent: number | null
+    status?: string
+    updated_at?: number | null
+    read_bytes_sec: number | null
+    write_bytes_sec: number | null
   }
   network: {
-    rx_bytes_sec: number
-    tx_bytes_sec: number
-    total_rx_bytes: number
-    total_tx_bytes: number
+    rx_bytes_sec: number | null
+    tx_bytes_sec: number | null
+    total_rx_bytes: number | null
+    total_tx_bytes: number | null
   }
-  load_avg: [number, number, number]
+  load_avg: [number | null, number | null, number | null]
+  monitor?: MonitorPolicy
 }
 
 export interface ARMThermalData {
-  temp_c: number
-  temp_status: 'normal' | 'warm' | 'hot' | 'critical'
-  throttled: boolean
-  under_voltage: boolean
-  freq_capped: boolean
-  throttling_flags_hex?: string
-  voltage_v?: number
-  freq_mhz?: number
-  governor?: string
-  board_model?: string
+  temp_c: number | null
+  temp_status: 'normal' | 'warm' | 'hot' | 'critical' | 'unknown'
+  temp_source?: string | null
+  throttle_source?: string | null
+  throttled: boolean | null
+  under_voltage: boolean | null
+  freq_capped: boolean | null
+  throttling_flags_hex?: string | null
+  voltage_v?: number | null
+  freq_mhz?: number | null
+  max_freq_mhz?: number | null
+  governor?: string | null
+  board_model?: string | null
+  collected_at?: number | null
   cooling_device?: {
     type: string
     cur_state: number

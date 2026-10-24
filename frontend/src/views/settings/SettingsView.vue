@@ -97,9 +97,23 @@
           <input
             v-model.number="settings.port"
             type="number"
+            min="1"
+            max="65535"
             class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-white font-mono focus:outline-none focus:border-brand-500"
           />
-          <span class="text-[10px] text-slate-500 font-mono mt-1 block">修改后需在服务器防火墙放行该端口并以新端口访问</span>
+          <div class="text-[10px] text-slate-400 font-mono mt-1.5 space-y-1">
+            <div>
+              当前生效: <span class="text-emerald-400 font-bold">{{ (settings.runtime?.effective_protocol || 'http').toUpperCase() }} :{{ settings.runtime?.effective_port || settings.port }}</span>
+              | 已保存端口: <span class="text-slate-200">{{ settings.runtime?.saved_port || settings.port }}</span>
+            </div>
+            <div v-if="settings.runtime?.port_overridden_by_env" class="text-amber-300">
+              环境变量 PORT 已覆盖配置文件端口；重启后仍优先使用环境变量 PORT。
+            </div>
+            <div v-else-if="settings.runtime?.restart_required" class="text-amber-300">
+              端口或 HTTPS 配置已变更，需重启面板守护进程后在新地址生效。
+            </div>
+            <div class="text-slate-500">修改后需在服务器防火墙放行该端口，重启面板后以新端口访问。</div>
+          </div>
         </div>
 
         <div>
@@ -118,8 +132,11 @@
           <input
             v-model.number="settings.session_timeout_minutes"
             type="number"
+            min="5"
+            max="10080"
             class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-white font-mono focus:outline-none focus:border-brand-500"
           />
+          <span class="text-[10px] text-slate-500 font-mono mt-1 block">超过该空闲时长未发起请求将自动注销会话并要求重新登录</span>
         </div>
       </div>
 
@@ -139,22 +156,65 @@
           ></textarea>
         </div>
 
-        <div>
-          <label class="block text-xs font-medium text-slate-300 mb-1">密码连续错误自动锁定阈值 (次)</label>
-          <input
-            v-model.number="settings.max_login_retry"
-            type="number"
-            class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-white font-mono focus:outline-none focus:border-brand-500"
-          />
-          <span class="text-[10px] text-slate-500 font-mono mt-1 block">达到上限后联动 Fail2ban 自动封禁该客户端 IP 1 小时</span>
-        </div>
-
-        <div class="flex items-center justify-between p-3.5 rounded-xl bg-slate-950/60 border border-slate-800">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
-            <div class="text-xs font-bold text-white">面板自身开启 HTTPS 加密访问</div>
-            <div class="text-[11px] text-slate-400 font-mono mt-0.5">防止公共 Wi-Fi 或中间人窃听面板管理员密码</div>
+            <label class="block text-xs font-medium text-slate-300 mb-1">连续错误锁定阈值 (次)</label>
+            <input
+              v-model.number="settings.max_login_retry"
+              type="number"
+              min="1"
+              max="20"
+              class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-white font-mono focus:outline-none focus:border-brand-500"
+            />
           </div>
-          <input type="checkbox" v-model="settings.ssl_enabled" class="w-4 h-4 rounded text-brand-500" />
+          <div>
+            <label class="block text-xs font-medium text-slate-300 mb-1">自动锁定时长 (分钟)</label>
+            <input
+              v-model.number="settings.login_lock_minutes"
+              type="number"
+              min="1"
+              max="1440"
+              class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-white font-mono focus:outline-none focus:border-brand-500"
+            />
+          </div>
+        </div>
+        <span class="text-[10px] text-slate-500 font-mono block">达到阈值后由面板内置登录防爆破策略自动锁定该客户端 IP 指定分钟数</span>
+
+        <div class="space-y-3 p-3.5 rounded-xl bg-slate-950/60 border border-slate-800">
+          <div class="flex items-center justify-between">
+            <div>
+              <div class="text-xs font-bold text-white">面板自身开启 HTTPS 加密访问</div>
+              <div class="text-[11px] text-slate-400 font-mono mt-0.5">需提供匹配的 PEM 证书与私钥文件路径，重启面板后以 HTTPS 监听</div>
+            </div>
+            <input type="checkbox" v-model="settings.ssl_enabled" class="w-4 h-4 rounded text-brand-500" />
+          </div>
+
+          <div v-if="settings.ssl_enabled" class="space-y-2.5 pt-2 border-t border-slate-800/80 font-mono text-xs">
+            <div>
+              <label class="block text-[11px] text-slate-300 mb-1">面板证书文件路径 (PEM Fullchain)</label>
+              <input
+                v-model="settings.panel_ssl_cert"
+                type="text"
+                placeholder="/etc/ssl/armguard/fullchain.pem"
+                class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-white text-xs focus:outline-none focus:border-brand-500"
+              />
+            </div>
+            <div>
+              <label class="block text-[11px] text-slate-300 mb-1">面板私钥文件路径 (PEM Private Key)</label>
+              <input
+                v-model="settings.panel_ssl_key"
+                type="text"
+                placeholder="/etc/ssl/armguard/privkey.pem"
+                class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-white text-xs focus:outline-none focus:border-brand-500"
+              />
+            </div>
+            <div v-if="settings.runtime?.tls_error" class="text-[11px] text-rose-400">
+              证书校验状态: {{ settings.runtime.tls_error }}
+            </div>
+            <div class="text-[10px] text-slate-500">
+              应急恢复提示: 若证书失效导致无法访问，可在服务器设置环境变量 <code class="text-slate-300">ARMGUARD_FORCE_HTTP=1</code> 重启服务恢复 HTTP 访问。
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -175,7 +235,7 @@
               v-model="pwdForm.old_password"
               type="password"
               required
-              placeholder="默认密码为 armguard"
+              placeholder="请输入当前管理员密码"
               class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2 text-white focus:outline-none focus:border-brand-500"
             />
           </div>
@@ -185,18 +245,19 @@
             <input
               v-model="pwdForm.new_username"
               type="text"
-              placeholder="admin"
+              placeholder="留空则保持当前用户名不变"
               class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2 text-white focus:outline-none focus:border-brand-500"
             />
           </div>
 
           <div>
-            <label class="block text-slate-400 mb-1">新登录密码 (至少 6 位)</label>
+            <label class="block text-slate-400 mb-1">新登录密码 (至少 8 位)</label>
             <input
               v-model="pwdForm.new_password"
               type="password"
               required
-              placeholder="输入新密码"
+              minlength="8"
+              placeholder="输入至少 8 位新密码"
               class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2 text-white focus:outline-none focus:border-brand-500"
             />
           </div>
@@ -247,12 +308,15 @@
         </div>
 
         <div class="pt-2 border-t border-slate-800 space-y-2">
-          <div class="flex items-center justify-between p-3.5 rounded-xl bg-slate-950 border border-slate-800">
+          <div class="flex items-center justify-between p-3.5 rounded-xl bg-slate-950 border border-slate-800 opacity-75">
             <div>
-              <div class="text-white font-semibold">双因素认证 (2FA / Google Authenticator)</div>
-              <div class="text-[11px] text-slate-400">登录时需提供 6 位动态 OTP 验证码</div>
+              <div class="text-white font-semibold flex items-center gap-2">
+                <span>双因素认证 (2FA / TOTP)</span>
+                <span class="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700">暂未开放</span>
+              </div>
+              <div class="text-[11px] text-slate-500 mt-0.5">当前版本尚未启用 TOTP 绑定与登录动态口令校验流程</div>
             </div>
-            <input type="checkbox" v-model="settings.two_factor_enabled" class="w-4 h-4 rounded text-brand-500" />
+            <input type="checkbox" :checked="false" disabled class="w-4 h-4 rounded text-slate-600 cursor-not-allowed" />
           </div>
         </div>
       </div>
@@ -445,12 +509,33 @@
           ARM 低开销推流优化
         </h3>
 
-        <div class="flex items-center justify-between p-3.5 rounded-xl bg-slate-950/60 border border-slate-800">
-          <div>
-            <div class="text-xs font-bold text-white">自适应节能推流 (Eco Mode)</div>
-            <div class="text-[11px] text-slate-400 mt-0.5">当检测到单核/低内存单板机时，将监控推流从 1s 调整为 3s，节约面板 CPU 开销</div>
+        <div class="space-y-3 p-3.5 rounded-xl bg-slate-950/60 border border-slate-800">
+          <div class="flex items-center justify-between">
+            <div>
+              <div class="text-xs font-bold text-white">自适应节能推流 (Eco Mode)</div>
+              <div class="text-[11px] text-slate-400 mt-0.5">当检测到单核或内存不高于阈值时，将监控采样与推流周期从 1s 调整为 3s，节约 CPU 开销</div>
+            </div>
+            <input type="checkbox" v-model="settings.eco_mode_enabled" class="w-4 h-4 rounded text-brand-500" />
           </div>
-          <input type="checkbox" v-model="settings.eco_mode_enabled" class="w-4 h-4 rounded text-brand-500" />
+
+          <div v-if="settings.eco_mode_enabled" class="pt-2 border-t border-slate-800/80 space-y-2">
+            <div>
+              <label class="block text-[11px] text-slate-300 mb-1">节能触发内存阈值 (MB, 256 - 65536)</label>
+              <input
+                v-model.number="settings.eco_mode_threshold_mb"
+                type="number"
+                min="256"
+                max="65536"
+                class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-white text-xs focus:outline-none focus:border-brand-500"
+              />
+            </div>
+            <div v-if="settings.monitor" class="text-[10px] text-slate-400">
+              当前采样状态:
+              <span :class="settings.monitor.eco_mode_active ? 'text-amber-300 font-bold' : 'text-emerald-400 font-bold'">
+                {{ settings.monitor.eco_mode_active ? `节能模式已激活 (${settings.monitor.interval_ms || settings.monitor.sample_interval_ms}ms)` : `标准实时采样 (${settings.monitor.interval_ms || settings.monitor.sample_interval_ms}ms)` }}
+              </span>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -462,10 +547,14 @@
         Webhook 告警机器人推送
       </h3>
 
+      <div class="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-200 leading-relaxed">
+        说明：当前支持保存 Webhook 通道配置并执行真实 HTTP 与平台业务码连通性校验；后台指标超限自动巡检推送能力将在后续版本启用。
+      </div>
+
       <div class="flex items-center justify-between p-3.5 rounded-xl bg-slate-950 border border-slate-800">
         <div>
-          <div class="text-white font-semibold">开启异常事件机器人推送</div>
-          <div class="text-[11px] text-slate-400">当服务器出现高负载、磁盘空间不足或登录异常时自动推送</div>
+          <div class="text-white font-semibold">开启异常事件机器人推送配置</div>
+          <div class="text-[11px] text-slate-400">配置飞书、钉钉、企业微信、Telegram 或自定义 JSON Webhook 接收端</div>
         </div>
         <input type="checkbox" v-model="settings.webhook_enabled" class="w-4 h-4 rounded text-brand-500" />
       </div>
@@ -479,6 +568,7 @@
               <option value="dingtalk">钉钉群机器人 (DingTalk)</option>
               <option value="wecom">企业微信群机器人 (WeCom)</option>
               <option value="telegram">Telegram Bot</option>
+              <option value="custom">自定义 JSON Webhook</option>
             </select>
           </div>
           <div class="md:col-span-2">
@@ -492,8 +582,8 @@
           </div>
         </div>
 
-        <div class="flex items-center justify-between pt-2">
-          <div class="flex items-center gap-4 text-slate-300">
+        <div class="flex flex-wrap items-center justify-between gap-3 pt-2">
+          <div class="flex flex-wrap items-center gap-4 text-slate-300">
             <label class="flex items-center gap-1.5 cursor-pointer">
               <input type="checkbox" value="high_load" v-model="settings.alert_events" class="w-3.5 h-3.5 rounded text-brand-500" />
               <span>CPU/内存超载 (&gt;90%)</span>
@@ -525,7 +615,7 @@
       <div class="flex items-center justify-between pb-2 border-b border-slate-800">
         <h3 class="text-sm font-bold text-white flex items-center gap-2">
           <Archive class="w-4 h-4 text-brand-400" />
-          面板全量数据备份与灾备恢复
+          面板配置数据备份与灾备恢复
         </h3>
         <button
           @click="handleCreateBackup"
@@ -538,7 +628,7 @@
       </div>
 
       <p class="text-slate-400 leading-relaxed">
-        备份包完整包含面板基础配置、虚拟主机配置、SSL 证书、数据库记录与计划任务。可用于跨服务器一键迁移或灾备还原。
+        备份归档包含面板配置目录（<code class="text-slate-300">/var/lib/armguard</code> 下的面板设置、管理员凭证哈希、网站/SSL/数据库/计划任务元数据与审计日志），不包含外部业务源码目录与数据库物理数据文件。还原时可在停止服务后解压至 <code class="text-slate-300">/var/lib/armguard</code>。
       </p>
 
       <div class="space-y-2 pt-2">
@@ -566,6 +656,12 @@
               >
                 下载
               </button>
+              <button
+                @click="handleDeleteBackup(b)"
+                class="px-3 py-1 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 text-rose-400 border border-rose-500/20"
+              >
+                删除
+              </button>
             </div>
           </div>
         </div>
@@ -582,7 +678,7 @@
       <div class="p-4 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between">
         <div>
           <div class="text-white font-bold">当前版本: {{ settings.current_version }}</div>
-          <div class="text-slate-400 text-[11px] mt-0.5">ARM64 原生编译高性能轻量 Linux 运维引擎</div>
+          <div class="text-slate-400 text-[11px] mt-0.5">ARM64 轻量 Linux 运维控制面板</div>
         </div>
         <button
           @click="checkUpdate"
@@ -631,10 +727,13 @@ import {
 import { PanelSettings, PanelBackupItem, settingsApi } from '@/api/settings'
 import { AIConfig, aiApi } from '@/api/ai'
 import { useSystemStore } from '@/stores/system'
+import { useAuthStore } from '@/stores/auth'
 import { toast } from '@/composables/useToast'
 import { eventBus, EVENTS } from '@/utils/eventBus'
+import { downloadWithTicket } from '@/utils/download'
 
 const systemStore = useSystemStore()
+const authStore = useAuthStore()
 const activeTab = ref('security')
 const savingBase = ref(false)
 const savingPwd = ref(false)
@@ -674,10 +773,14 @@ const settings = reactive<PanelSettings>({
   port: 8888,
   security_entrance: '/armguard',
   ssl_enabled: false,
+  panel_ssl_cert: '',
+  panel_ssl_key: '',
   session_timeout_minutes: 120,
   ip_whitelist: '',
   max_login_retry: 5,
+  login_lock_minutes: 15,
   eco_mode_enabled: true,
+  eco_mode_threshold_mb: 2048,
   current_version: 'v0.1.0-alpha',
   latest_version: 'v0.1.0-alpha',
   has_update: false,
@@ -724,12 +827,16 @@ async function loadBackups() {
 async function saveBaseSettings() {
   savingBase.value = true
   try {
-    await settingsApi.updateSettings(settings)
+    const res = await settingsApi.updateSettings(settings)
+    if (res.data?.data) {
+      Object.assign(settings, res.data.data)
+    }
+    await loadSettings()
     if (settings.panel_title) {
       systemStore.setPanelTitle(settings.panel_title)
     }
     eventBus.emit(EVENTS.SETTINGS_UPDATED, settings)
-    toast.success('面板配置已成功保存并即时生效！')
+    toast.success(res.data?.message || '面板配置已成功保存！')
   } catch (err: any) {
     toast.error(`保存失败: ${err.message}`)
   } finally {
@@ -745,8 +852,10 @@ async function handleChangePassword() {
       new_username: pwdForm.new_username || undefined,
       new_password: pwdForm.new_password
     })
+    await authStore.refreshUserInfo()
     toast.success('管理员身份凭证修改成功，请牢记新密码！')
     pwdForm.old_password = ''
+    pwdForm.new_username = ''
     pwdForm.new_password = ''
   } catch (err: any) {
     toast.error(`修改失败: ${err.message}`)
@@ -777,11 +886,11 @@ async function handleRegenerateToken() {
 async function handleTestWebhook() {
   testingWebhook.value = true
   try {
-    await settingsApi.testWebhook({
+    const res = await settingsApi.testWebhook({
       webhook_type: settings.webhook_type,
       webhook_url: settings.webhook_url
     })
-    toast.success('✓ 告警 Webhook 测试消息已成功投递！')
+    toast.success(res.data?.message || '✓ 告警 Webhook 测试消息已成功投递！')
   } catch (e: any) {
     toast.error(`测试失败: ${e.message}`)
   } finally {
@@ -793,12 +902,23 @@ async function handleCreateBackup() {
   backingUp.value = true
   try {
     const res = await settingsApi.createPanelBackup()
-    toast.success(`面板全量数据备份成功！文件: ${res.data?.data?.file_name} (${res.data?.data?.size_kb} KB)`)
+    toast.success(`面板数据备份成功！文件: ${res.data?.data?.file_name} (${res.data?.data?.size_kb} KB)`)
     await loadBackups()
   } catch (e: any) {
     toast.error(`备份失败: ${e.message}`)
   } finally {
     backingUp.value = false
+  }
+}
+
+async function handleDeleteBackup(b: PanelBackupItem) {
+  if (!confirm(`确定要删除备份归档 ${b.file_name} 吗？`)) return
+  try {
+    await settingsApi.deletePanelBackup(b.file_name)
+    toast.success(`已删除备份: ${b.file_name}`)
+    await loadBackups()
+  } catch (e: any) {
+    toast.error(`删除失败: ${e.message}`)
   }
 }
 
@@ -818,10 +938,10 @@ async function handleRestartPanel() {
   if (confirm('确定要重启面板守护引擎吗？Web 界面将断开连接约 2 秒后自动恢复。')) {
     restarting.value = true
     try {
-      await settingsApi.restartPanelEngine()
-      toast.info('面板正在平滑重启中，稍后将自动恢复连接！')
-    } catch {
-      toast.info('面板正在平滑重启中，稍后将自动恢复连接！')
+      const res = await settingsApi.restartPanelEngine()
+      toast.info(res.data?.message || '面板正在平滑重启中，稍后将自动恢复连接！')
+    } catch (e: any) {
+      toast.error(`重启请求失败: ${e.message}`)
     } finally {
       setTimeout(() => {
         restarting.value = false
@@ -842,11 +962,13 @@ async function checkUpdate() {
   }
 }
 
-function showDownloadNotice(b: PanelBackupItem) {
-  const token = localStorage.getItem('armguard_token') || ''
-  const url = `/api/v1/settings/backup/download?file_name=${encodeURIComponent(b.file_name)}&token=${encodeURIComponent(token)}`
-  window.open(url, '_blank')
-  toast.success(`开始下载面板备份包: ${b.file_name}`)
+async function showDownloadNotice(b: PanelBackupItem) {
+  try {
+    await downloadWithTicket(`/api/v1/settings/backup/download?file_name=${encodeURIComponent(b.file_name)}`, b.file_name)
+    toast.success(`开始下载面板备份包: ${b.file_name}`)
+  } catch (e: any) {
+    toast.error(`下载失败: ${e.message}`)
+  }
 }
 
 async function loadAiConfig() {

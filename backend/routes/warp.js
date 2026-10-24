@@ -311,7 +311,7 @@ export async function handleWarp(pathname, req, res, url, ctx) {
         env: { ...process.env, DEBIAN_FRONTEND: 'noninteractive' },
         encoding: 'utf-8'
       })
-      ctx.logOperation('admin', '安装 wireguard-go 与 wireguard-tools', 'WARP Engine')
+      ctx.logOperation(ctx.currentUser(), '安装 wireguard-go 与 wireguard-tools', 'WARP Engine')
       res.json({ system_health: getWarpSystemHealth() }, 'WireGuard-Go 引擎与工具链安装成功！')
     } catch (err) {
       res.json(null, `安装失败: ${err.message}`, 500)
@@ -322,7 +322,7 @@ export async function handleWarp(pathname, req, res, url, ctx) {
   if (pathname === '/api/v1/plugins/warp/register-account' && req.method === 'POST') {
     try {
       const acc = registerWarpAccountReal(ctx)
-      ctx.logOperation('admin', '一键注册 Cloudflare WARP 账号', acc.account_id)
+      ctx.logOperation(ctx.currentUser(), '一键注册 Cloudflare WARP 账号', acc.account_id)
       res.json({ account: acc, system_health: getWarpSystemHealth() }, 'Cloudflare WARP 官方账号注册成功！')
     } catch (err) {
       res.json(null, `注册失败: ${err.message}`, 500)
@@ -334,7 +334,7 @@ export async function handleWarp(pathname, req, res, url, ctx) {
     const body = await ctx.parseBody(req, res)
     warpConfig = { ...warpConfig, ...body }
     ctx.saveJSON(WARP_CONFIG_FILE, warpConfig)
-    ctx.logOperation('admin', '修改 WARP 插件配置', `模式:${warpConfig.mode}, 引擎:${warpConfig.wireguard_type}`)
+    ctx.logOperation(ctx.currentUser(), '修改 WARP 插件配置', `模式:${warpConfig.mode}, 引擎:${warpConfig.wireguard_type}`)
     res.json({
       config: warpConfig,
       trace: getRealWarpTrace(),
@@ -350,7 +350,7 @@ export async function handleWarp(pathname, req, res, url, ctx) {
     }
     try {
       connectWarpReal(warpConfig, ctx)
-      ctx.logOperation('admin', '启动 Cloudflare WARP 隧道', `模式:${warpConfig.mode} [${warpConfig.wireguard_type}]`)
+      ctx.logOperation(ctx.currentUser(), '启动 Cloudflare WARP 隧道', `模式:${warpConfig.mode} [${warpConfig.wireguard_type}]`)
       res.json({
         config: warpConfig,
         trace: getRealWarpTrace(),
@@ -364,7 +364,7 @@ export async function handleWarp(pathname, req, res, url, ctx) {
 
   if (pathname === '/api/v1/plugins/warp/disconnect' && req.method === 'POST') {
     disconnectWarpReal(ctx)
-    ctx.logOperation('admin', '断开 Cloudflare WARP 隧道', 'Disconnected')
+    ctx.logOperation(ctx.currentUser(), '断开 Cloudflare WARP 隧道', 'Disconnected')
     res.json({
       config: warpConfig,
       trace: getRealWarpTrace(),
@@ -382,7 +382,7 @@ export async function handleWarp(pathname, req, res, url, ctx) {
     } catch {}
     warpConfig.installed = true
     ctx.saveJSON(WARP_CONFIG_FILE, warpConfig)
-    ctx.logOperation('admin', '安装 Cloudflare WARP 依赖组件', 'wireguard-tools')
+    ctx.logOperation(ctx.currentUser(), '安装 Cloudflare WARP 依赖组件', 'wireguard-tools')
     res.json({ config: warpConfig, system_health: getWarpSystemHealth() }, 'WARP 核心依赖组件安装就绪！')
     return true
   }
