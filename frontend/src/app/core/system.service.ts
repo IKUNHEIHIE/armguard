@@ -1,4 +1,4 @@
-import { Injectable, signal } from '@angular/core'
+import { Injectable, computed, signal } from '@angular/core'
 import {
   systemApi,
   SystemInfo,
@@ -8,6 +8,17 @@ import {
   MonitorPolicy,
 } from '@/api/system'
 import { settingsApi } from '@/api/settings'
+
+export interface TelemetrySamplePoint {
+  timestamp: number
+  time: string
+  cpu: number | null
+  mem: number | null
+  rxKb: number | null
+  txKb: number | null
+}
+
+export type TelemetryConnectionState = 'ws_live' | 'http_polling' | 'reconnecting' | 'offline'
 
 @Injectable({ providedIn: 'root' })
 export class SystemService {
@@ -65,14 +76,75 @@ export class SystemService {
   })
 
   readonly processes = signal<ProcessItem[]>([])
+  readonly processesLoading = signal<boolean>(false)
+  readonly processesError = signal<string | null>(null)
+
   readonly wsConnected = signal<boolean>(false)
+  readonly connectionState = signal<TelemetryConnectionState>('reconnecting')
+  readonly lastSuccessAt = signal<number | null>(null)
+  readonly lastError = signal<string | null>(null)
+  readonly consecutiveFailures = signal<number>(0)
+
   readonly monitorPolicy = signal<MonitorPolicy | null>(null)
   readonly pollIntervalMs = signal<number>(1000)
+
+  // Persistent session telemetry history so navigating away from Dashboard and back preserves chart curve (FE-016)
+  readonly telemetryHistory = signal<TelemetrySamplePoint[]>([])
+  private lastSampleTimestamp: number | null = null
+
+  readonly isStale = computed(() => {
+    const fails = this.consecutiveFailures()
+    if (fails >= 2) return true
+    const last = this.lastSuccessAt()
+    if (!last) return false
+    const threshold = Math.max(12000, this.pollIntervalMs() * 4)
+    return Date.now() - last > threshold
+  })
+
+  readonly lastUpdatedLabel = computed(() => {
+    const ts = this.lastSuccessAt()
+    if (!ts) return '尚未完成首次采集'
+    const d = new Date(ts)
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`
+  })
+
+  readonly connectionBadgeLabel = computed(() => {
+    const state = this.connectionState()
+    if (state === 'ws_live') return 'WebSocket 实时流'
+    if (state === 'http_polling') return 'HTTP 轮询模式'
+    if (state === 'reconnecting') return '正在重连遥测链路...'
+    return '连接中断 · 数据已过期'
+  })
+
+  readonly connectionBadgeClass = computed(() => {
+    const state = this.connectionState()
+    if (state === 'ws_live') return 'success'
+    if (state === 'http_polling') return 'primary'
+    if (state === 'reconnecting') return 'warning'
+    return 'danger'
+  })
 
   private monitorActive = false
   private monitorGeneration = 0
   private pollTimer: ReturnType<typeof setTimeout> | null = null
+  private wsRetryTimer: ReturnType<typeof setTimeout> | null = null
   private wsInstance: WebSocket | null = null
+  private wsBackoffAttempt = 0
+
+  private lastSettingsFetchedAt = 0
+  private lastInfoFetchedAt = 0
+
+  constructor() {
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden && this.monitorActive) {
+          if (!this.wsConnected()) {
+            this.fetchRealtime(true)
+          }
+        }
+      })
+    }
+  }
 
   setPanelTitle(title: string) {
     if (!title) return
@@ -89,10 +161,53 @@ export class SystemService {
     }
   }
 
-  async fetchPanelSettings() {
+  private recordSample(rt: RealtimeMonitorData) {
+    const ts = rt.timestamp || Date.now()
+    if (ts === this.lastSampleTimestamp) return
+    this.lastSampleTimestamp = ts
+    const d = new Date(ts)
+    const label = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`
+    const pt: TelemetrySamplePoint = {
+      timestamp: ts,
+      time: label,
+      cpu: rt.cpu.percent === null || rt.cpu.percent === undefined ? null : Number(rt.cpu.percent.toFixed(1)),
+      mem: rt.memory.percent === null || rt.memory.percent === undefined ? null : Number(rt.memory.percent.toFixed(1)),
+      rxKb:
+        rt.network.rx_bytes_sec === null || rt.network.rx_bytes_sec === undefined
+          ? null
+          : Number((rt.network.rx_bytes_sec / 1024).toFixed(1)),
+      txKb:
+        rt.network.tx_bytes_sec === null || rt.network.tx_bytes_sec === undefined
+          ? null
+          : Number((rt.network.tx_bytes_sec / 1024).toFixed(1)),
+    }
+    this.telemetryHistory.update((prev) => {
+      const next = [...prev, pt]
+      return next.length > 60 ? next.slice(next.length - 60) : next
+    })
+  }
+
+  private markTelemetrySuccess(isWs: boolean) {
+    this.lastSuccessAt.set(Date.now())
+    this.consecutiveFailures.set(0)
+    this.lastError.set(null)
+    this.connectionState.set(isWs ? 'ws_live' : 'http_polling')
+  }
+
+  private markTelemetryFailure(errMessage: string) {
+    const nextFails = this.consecutiveFailures() + 1
+    this.consecutiveFailures.set(nextFails)
+    this.lastError.set(errMessage)
+    this.connectionState.set(nextFails >= 3 ? 'offline' : 'reconnecting')
+  }
+
+  async fetchPanelSettings(force = false) {
+    const now = Date.now()
+    if (!force && now - this.lastSettingsFetchedAt < 60000) return
     try {
       const res = await settingsApi.getSettings()
       const data = res.data?.data
+      this.lastSettingsFetchedAt = now
       if (data?.panel_title) {
         this.setPanelTitle(data.panel_title)
       }
@@ -102,25 +217,29 @@ export class SystemService {
     } catch {}
   }
 
-  async fetchInfo() {
+  async fetchInfo(force = false) {
+    const now = Date.now()
+    if (!force && this.info() && now - this.lastInfoFetchedAt < 60000) return
     try {
       const res = await systemApi.getSystemInfo()
       if (res.data.code === 0 && res.data.data) {
         this.info.set(res.data.data)
+        this.lastInfoFetchedAt = now
       }
-    } catch (e) {
-      console.warn('Failed to fetch system info:', e)
+    } catch (e: any) {
+      this.lastError.set(e?.message || '获取宿主机概要失败')
     }
   }
 
-  async fetchRealtime() {
+  async fetchRealtime(passive = true) {
     try {
       const [resRt, resTh] = await Promise.all([
-        systemApi.getRealtimeMonitor(),
-        systemApi.getARMThermal(),
+        systemApi.getRealtimeMonitor(passive),
+        systemApi.getARMThermal(passive),
       ])
       if (resRt.data.code === 0 && resRt.data.data) {
         this.realtime.set(resRt.data.data)
+        this.recordSample(resRt.data.data)
         if (resRt.data.data.monitor) {
           this.applyMonitorPolicy(resRt.data.data.monitor)
         }
@@ -128,26 +247,37 @@ export class SystemService {
       if (resTh.data.code === 0 && resTh.data.data) {
         this.thermal.set(resTh.data.data)
       }
-    } catch (e) {
-      console.warn('Failed to poll realtime telemetry:', e)
+      if (!this.wsConnected()) {
+        this.markTelemetrySuccess(false)
+      }
+    } catch (e: any) {
+      if (!this.wsConnected()) {
+        this.markTelemetryFailure(e?.message || '遥测轮询请求失败')
+      }
     }
   }
 
   async fetchProcesses(sortBy: 'cpu' | 'mem' = 'cpu', limit = 30, passive = false) {
+    if (!passive && this.processes().length === 0) {
+      this.processesLoading.set(true)
+    }
     try {
       const res = await systemApi.getProcesses(sortBy, limit, passive)
       if (res.data.code === 0 && res.data.data) {
         this.processes.set(res.data.data.list || [])
+        this.processesError.set(null)
       }
-    } catch (e) {
-      console.warn('Failed to fetch processes:', e)
+    } catch (e: any) {
+      this.processesError.set(e?.message || '无法读取活跃进程列表')
+    } finally {
+      this.processesLoading.set(false)
     }
   }
 
   async killProcess(pid: number, force = false) {
     const res = await systemApi.killProcess(pid, force)
     if (res.data.code === 0) {
-      await this.fetchProcesses()
+      await this.fetchProcesses('cpu', 15, false)
       return true
     }
     return false
@@ -160,32 +290,54 @@ export class SystemService {
     }
   }
 
+  private clearWsRetryTimer() {
+    if (this.wsRetryTimer) {
+      clearTimeout(this.wsRetryTimer)
+      this.wsRetryTimer = null
+    }
+  }
+
   private scheduleFallbackPoll(gen: number) {
     this.clearPollTimer()
     if (!this.monitorActive || gen !== this.monitorGeneration) return
+    const fails = this.consecutiveFailures()
+    const baseMs =
+      typeof document !== 'undefined' && document.hidden
+        ? Math.max(this.pollIntervalMs() * 3, 5000)
+        : this.pollIntervalMs()
+    // Exponential backoff on consecutive failures (1x, 2x, 4x, 8x up to 15s) (FE-007)
+    const delayMs =
+      fails === 0 ? baseMs : Math.min(15000, baseMs * Math.pow(2, Math.min(fails, 4)))
+
     this.pollTimer = setTimeout(async () => {
       if (!this.monitorActive || gen !== this.monitorGeneration) return
-      await this.fetchRealtime()
+      await this.fetchRealtime(true)
       this.scheduleFallbackPoll(gen)
-    }, this.pollIntervalMs())
+    }, delayMs)
   }
 
   private startFallbackPolling(gen: number) {
     if (!this.monitorActive || gen !== this.monitorGeneration) return
     this.clearPollTimer()
-    this.fetchRealtime().finally(() => {
+    this.fetchRealtime(true).finally(() => {
       this.scheduleFallbackPoll(gen)
     })
   }
 
-  startMonitoring() {
-    if (this.monitorActive) return
-    const token = localStorage.getItem('armguard_token')
-    if (!token) return
+  private scheduleWsReconnect(gen: number) {
+    this.clearWsRetryTimer()
+    if (!this.monitorActive || gen !== this.monitorGeneration) return
+    this.wsBackoffAttempt += 1
+    const delay = Math.min(20000, 2000 * Math.pow(2, Math.min(this.wsBackoffAttempt - 1, 3)))
+    this.wsRetryTimer = setTimeout(() => {
+      if (!this.monitorActive || gen !== this.monitorGeneration || this.wsConnected()) return
+      this.openWebSocket(gen)
+    }, delay)
+  }
 
-    this.monitorActive = true
-    this.monitorGeneration += 1
-    const gen = this.monitorGeneration
+  private openWebSocket(gen: number) {
+    const token = localStorage.getItem('armguard_token')
+    if (!token || !this.monitorActive || gen !== this.monitorGeneration) return
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const wsUrl = `${protocol}//${window.location.host}/system/monitor/ws`
@@ -199,20 +351,25 @@ export class SystemService {
           ws.close()
           return
         }
+        this.wsBackoffAttempt = 0
         this.wsConnected.set(true)
+        this.markTelemetrySuccess(true)
         this.clearPollTimer()
+        this.clearWsRetryTimer()
       }
 
       ws.onmessage = (event) => {
         if (!this.monitorActive || gen !== this.monitorGeneration) return
         try {
           const data = JSON.parse(event.data)
-          if (data.realtime) this.realtime.set(data.realtime)
+          if (data.realtime) {
+            this.realtime.set(data.realtime)
+            this.recordSample(data.realtime)
+          }
           if (data.arm_thermal) this.thermal.set(data.arm_thermal)
           if (data.monitor) this.applyMonitorPolicy(data.monitor)
-        } catch (e) {
-          console.error('Invalid WS telemetry payload:', e)
-        }
+          this.markTelemetrySuccess(true)
+        } catch {}
       }
 
       ws.onclose = () => {
@@ -220,21 +377,47 @@ export class SystemService {
         this.wsConnected.set(false)
         if (this.monitorActive && gen === this.monitorGeneration) {
           this.startFallbackPolling(gen)
+          this.scheduleWsReconnect(gen)
         }
       }
 
       ws.onerror = () => {
-        ws.close()
+        try {
+          ws.close()
+        } catch {}
       }
     } catch {
       this.startFallbackPolling(gen)
+      this.scheduleWsReconnect(gen)
     }
+  }
+
+  startMonitoring() {
+    if (this.monitorActive) return
+    const token = localStorage.getItem('armguard_token')
+    if (!token) return
+
+    this.monitorActive = true
+    this.monitorGeneration += 1
+    this.wsBackoffAttempt = 0
+    this.connectionState.set('reconnecting')
+    const gen = this.monitorGeneration
+    this.openWebSocket(gen)
+  }
+
+  reconnectNow() {
+    this.stopMonitoring()
+    this.consecutiveFailures.set(0)
+    this.startMonitoring()
+    this.fetchInfo(true)
+    this.fetchRealtime(false)
   }
 
   stopMonitoring() {
     this.monitorActive = false
     this.monitorGeneration += 1
     this.clearPollTimer()
+    this.clearWsRetryTimer()
     if (this.wsInstance) {
       const ws = this.wsInstance
       this.wsInstance = null

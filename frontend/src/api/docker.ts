@@ -52,7 +52,15 @@ export interface CreateContainerParams {
 }
 
 export const dockerApi = {
-  getContainers: () => apiClient.get<ApiResponse<{ list: DockerContainer[]; docker_installed: boolean; docker_version: string }>>('/docker/containers'),
+  getContainers: () =>
+    apiClient.get<
+      ApiResponse<{
+        list: DockerContainer[]
+        docker_installed: boolean
+        daemon_running?: boolean
+        docker_version: string | null
+      }>
+    >('/docker/containers'),
   startContainer: (id: string) => apiClient.post<ApiResponse<void>>(`/docker/containers/${id}/start`),
   stopContainer: (id: string) => apiClient.post<ApiResponse<void>>(`/docker/containers/${id}/stop`),
   restartContainer: (id: string) => apiClient.post<ApiResponse<void>>(`/docker/containers/${id}/restart`),
@@ -60,7 +68,15 @@ export const dockerApi = {
   getContainerLogs: (id: string, lines = 200) => apiClient.get<ApiResponse<{ logs: string[] }>>(`/docker/containers/${id}/logs`, { params: { lines } }),
   createContainer: (params: CreateContainerParams) => apiClient.post<ApiResponse<{ container_id: string }>>('/docker/containers', params),
 
-  getImages: () => apiClient.get<ApiResponse<{ list: DockerImage[] }>>('/docker/images'),
+  getImages: () =>
+    apiClient.get<
+      ApiResponse<{
+        list: DockerImage[]
+        docker_installed?: boolean
+        daemon_running?: boolean
+        docker_version?: string | null
+      }>
+    >('/docker/images'),
   inspectManifest: (image: string, tag = 'latest') => apiClient.get<ApiResponse<ManifestInspectResult>>('/docker/images/inspect-manifest', { params: { image, tag } }),
   pullImage: (image: string, tag = 'latest') => apiClient.post<ApiResponse<{ task_id: string }>>('/docker/images/pull', { image, tag }),
   deleteImage: (id: string, force = false) => apiClient.delete<ApiResponse<void>>(`/docker/images/${id}`, { params: { force } }),

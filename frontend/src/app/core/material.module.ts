@@ -2,6 +2,7 @@ import { NgModule } from '@angular/core'
 import { CommonModule } from '@angular/common'
 import { FormsModule, ReactiveFormsModule } from '@angular/forms'
 import { RouterModule } from '@angular/router'
+import { A11yModule } from '@angular/cdk/a11y'
 
 import { MatToolbarModule } from '@angular/material/toolbar'
 import { MatSidenavModule } from '@angular/material/sidenav'
@@ -35,6 +36,7 @@ export const AG_MATERIAL_MODULES = [
   FormsModule,
   ReactiveFormsModule,
   RouterModule,
+  A11yModule,
   MatToolbarModule,
   MatSidenavModule,
   MatButtonModule,

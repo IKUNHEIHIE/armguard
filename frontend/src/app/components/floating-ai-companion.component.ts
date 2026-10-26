@@ -3,6 +3,7 @@ import { AgMaterialModule } from '../core/material.module'
 import { SystemService } from '../core/system.service'
 import { ToastService } from '../core/toast.service'
 import { aiApi, AIConfig, CommandGenResult, HealthAuditResult } from '@/api/ai'
+import { copyToClipboard } from '@/utils/clipboard'
 
 @Component({
   selector: 'ag-floating-ai-companion',
@@ -12,40 +13,68 @@ import { aiApi, AIConfig, CommandGenResult, HealthAuditResult } from '@/api/ai'
     <!-- Google M3 Extended FAB -->
     <button
       *ngIf="aiConfig.enabled"
+      type="button"
       mat-fab
       extended
       class="m3-ai-fab"
+      aria-label="打开或关闭智能运维伴侣"
       (click)="toggleOpen()"
       matTooltip="打开 Google M3 智能运维伴侣"
     >
-      <mat-icon>{{ isOpen() ? 'close' : 'auto_awesome' }}</mat-icon>
+      <mat-icon aria-hidden="true">{{ isOpen() ? 'close' : 'auto_awesome' }}</mat-icon>
       <span>{{ isOpen() ? '收起助手' : 'AI 伴侣' }}</span>
     </button>
 
     <!-- Slide-over M3 Sheet -->
-    <div *ngIf="isOpen()" class="m3-ai-sheet">
+    <div
+      *ngIf="isOpen()"
+      class="m3-ai-sheet"
+      role="dialog"
+      aria-modal="false"
+      aria-label="ArmGuard AI 运维伴侣"
+    >
       <div class="sheet-header">
         <div class="header-title">
-          <div class="gemini-badge">
+          <div class="gemini-badge" aria-hidden="true">
             <mat-icon>auto_awesome</mat-icon>
           </div>
           <div>
             <div class="title">ArmGuard AI 运维伴侣</div>
             <div class="subtitle font-mono">
-              {{ aiConfig.is_configured ? '在线大模型 (' + (aiConfig.model || 'LLM') + ')' : '离线专家规则引擎' }}
+              {{
+                aiConfig.is_configured
+                  ? '在线大模型 (' + (aiConfig.model || 'LLM') + ')'
+                  : '本地离线规则引擎 · 数据不出本机'
+              }}
             </div>
           </div>
         </div>
-        <button mat-icon-button (click)="isOpen.set(false)">
+        <button
+          type="button"
+          mat-icon-button
+          aria-label="关闭智能运维伴侣窗口"
+          (click)="isOpen.set(false)"
+        >
           <mat-icon>close</mat-icon>
         </button>
+      </div>
+
+      <!-- AI Privacy & Data Routing Disclosure Banner (FE-018) -->
+      <div class="ai-privacy-strip font-mono">
+        <mat-icon aria-hidden="true">{{ aiConfig.is_configured ? 'cloud_upload' : 'verified_user' }}</mat-icon>
+        <span *ngIf="aiConfig.is_configured">
+          数据流向：提问内容将发送至已配置的在线接口 ({{ aiConfig.api_url || '外部 LLM' }})，请勿粘贴明文私钥。
+        </span>
+        <span *ngIf="!aiConfig.is_configured">
+          数据流向：当前使用宿主机本地离线专家规则库，所有对话与巡检均在本机完成。
+        </span>
       </div>
 
       <mat-tab-group animationDuration="180ms" class="sheet-tabs">
         <!-- Tab 1: Chat -->
         <mat-tab label="智能问答">
           <div class="tab-pane chat-pane">
-            <div class="messages-list font-mono">
+            <div class="messages-list font-mono" aria-live="polite">
               <div class="msg-bubble assistant">
                 你好！我是 ARM Linux 智能运维助手。当前宿主机 CPU:
                 <strong>{{
@@ -75,12 +104,20 @@ import { aiApi, AIConfig, CommandGenResult, HealthAuditResult } from '@/api/ai'
 
             <form (ngSubmit)="sendChat()" class="chat-input-bar">
               <input
+                id="ag-ai-chat-input"
                 type="text"
                 [(ngModel)]="chatInput"
                 name="chatInput"
+                aria-label="输入运维问题"
                 placeholder="询问 Nginx 反代、ARM 温控或排障指令..."
               />
-              <button mat-flat-button color="primary" type="submit" [disabled]="chatLoading()">
+              <button
+                mat-flat-button
+                color="primary"
+                type="submit"
+                aria-label="发送问题"
+                [disabled]="chatLoading() || !chatInput.trim()"
+              >
                 <mat-icon>send</mat-icon>
               </button>
             </form>
@@ -91,18 +128,20 @@ import { aiApi, AIConfig, CommandGenResult, HealthAuditResult } from '@/api/ai'
         <mat-tab label="指令生成">
           <div class="tab-pane">
             <div class="m3-field">
-              <label>自然语言描述运维需求</label>
+              <label for="ag-ai-cmd-prompt">自然语言描述运维需求</label>
               <textarea
+                id="ag-ai-cmd-prompt"
                 rows="3"
                 [(ngModel)]="cmdPrompt"
                 placeholder="例如：查找 /var/log 下大于 50MB 的日志文件并按大小排序"
               ></textarea>
             </div>
             <button
+              type="button"
               mat-flat-button
               color="primary"
               (click)="generateCmd()"
-              [disabled]="cmdLoading()"
+              [disabled]="cmdLoading() || !cmdPrompt.trim()"
             >
               <mat-icon>terminal</mat-icon>
               <span>{{ cmdLoading() ? '生成中...' : '生成 Linux 命令' }}</span>
@@ -113,7 +152,9 @@ import { aiApi, AIConfig, CommandGenResult, HealthAuditResult } from '@/api/ai'
                 <span class="m3-badge" [ngClass]="riskClass(cmdResult.risk)">
                   风险等级: {{ cmdResult.risk }}
                 </span>
-                <button mat-stroked-button (click)="copyText(cmdResult.command)">复制指令</button>
+                <button type="button" mat-stroked-button (click)="copyText(cmdResult.command)">
+                  复制指令
+                </button>
               </div>
               <pre class="m3-code-console">{{ cmdResult.command }}</pre>
               <div class="cmd-explain">{{ cmdResult.explanation }}</div>
@@ -125,6 +166,7 @@ import { aiApi, AIConfig, CommandGenResult, HealthAuditResult } from '@/api/ai'
         <mat-tab label="健康巡检">
           <div class="tab-pane">
             <button
+              type="button"
               mat-flat-button
               color="primary"
               (click)="runAudit()"
@@ -171,8 +213,8 @@ import { aiApi, AIConfig, CommandGenResult, HealthAuditResult } from '@/api/ai'
     `
       .m3-ai-fab {
         position: fixed !important;
-        right: 24px;
-        bottom: 24px;
+        right: 20px;
+        bottom: 20px;
         z-index: 900;
         border-radius: 18px !important;
         background: var(--ag-primary-container) !important;
@@ -181,12 +223,12 @@ import { aiApi, AIConfig, CommandGenResult, HealthAuditResult } from '@/api/ai'
       }
       .m3-ai-sheet {
         position: fixed;
-        right: 24px;
-        bottom: 88px;
+        right: 20px;
+        bottom: 84px;
         width: 410px;
-        max-width: calc(100vw - 32px);
+        max-width: calc(100vw - 28px);
         height: 540px;
-        max-height: calc(100vh - 120px);
+        max-height: calc(100dvh - 110px);
         z-index: 901;
         background: var(--ag-surface-low);
         border: 1px solid var(--ag-outline-variant);
@@ -200,7 +242,7 @@ import { aiApi, AIConfig, CommandGenResult, HealthAuditResult } from '@/api/ai'
         display: flex;
         align-items: center;
         justify-content: space-between;
-        padding: 14px 18px;
+        padding: 12px 16px;
         background: var(--ag-surface);
         border-bottom: 1px solid var(--ag-outline-variant);
       }
@@ -210,8 +252,8 @@ import { aiApi, AIConfig, CommandGenResult, HealthAuditResult } from '@/api/ai'
         gap: 10px;
       }
       .gemini-badge {
-        width: 36px;
-        height: 36px;
+        width: 34px;
+        height: 34px;
         border-radius: 12px;
         background: var(--ag-primary-container);
         color: var(--ag-on-primary-container);
@@ -221,11 +263,27 @@ import { aiApi, AIConfig, CommandGenResult, HealthAuditResult } from '@/api/ai'
       }
       .title {
         font-weight: 700;
-        font-size: 0.92rem;
+        font-size: 0.9rem;
       }
       .subtitle {
-        font-size: 0.7rem;
+        font-size: 0.68rem;
         color: var(--ag-on-surface-variant);
+      }
+      .ai-privacy-strip {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 14px;
+        background: var(--ag-surface-lowest);
+        border-bottom: 1px solid var(--ag-outline-variant);
+        font-size: 0.68rem;
+        color: var(--ag-on-surface-variant);
+      }
+      .ai-privacy-strip mat-icon {
+        font-size: 14px;
+        width: 14px;
+        height: 14px;
+        color: var(--ag-primary);
       }
       .sheet-tabs {
         flex: 1;
@@ -234,11 +292,11 @@ import { aiApi, AIConfig, CommandGenResult, HealthAuditResult } from '@/api/ai'
         min-height: 0;
       }
       .tab-pane {
-        padding: 16px;
+        padding: 14px;
         display: flex;
         flex-direction: column;
         gap: 12px;
-        height: 410px;
+        height: 380px;
         overflow-y: auto;
       }
       .chat-pane {
@@ -439,8 +497,12 @@ export class FloatingAiCompanionComponent implements OnInit {
     return 'success'
   }
 
-  copyText(text: string) {
-    navigator.clipboard.writeText(text)
-    this.toast.success('命令已复制到剪贴板')
+  async copyText(text: string) {
+    const res = await copyToClipboard(text)
+    if (res.ok) {
+      this.toast.success('命令已复制到剪贴板')
+    } else {
+      this.toast.warning(res.reason || '复制失败，请手动选中命令复制')
+    }
   }
 }

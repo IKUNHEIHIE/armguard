@@ -337,7 +337,8 @@ function isValidDomain(domain) {
 const PASSIVE_ENDPOINTS = new Set([
   '/api/v1/system/monitor/realtime',
   '/api/v1/system/hardware/thermal',
-  '/api/v1/system/processes'
+  '/api/v1/system/processes',
+  '/api/v1/apps/tasks'
 ])
 
 function isPassiveRequest(req, url) {

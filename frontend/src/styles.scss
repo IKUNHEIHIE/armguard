@@ -221,20 +221,51 @@ pre {
 
 .m3-grid-4 {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
 }
 
 .m3-grid-3 {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
 }
 
 .m3-grid-2 {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+@container (max-width: 920px) {
+  .m3-grid-4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .m3-grid-3 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container (max-width: 720px) {
+  .m3-grid-2,
+  .m3-grid-3 {
+    grid-template-columns: 1fr;
+  }
+}
+
+@container (max-width: 520px) {
+  .m3-grid-4 {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 1180px) {
+  .m3-grid-4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .m3-grid-3 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 768px) {
@@ -334,15 +365,24 @@ table.m3-data-table {
 
   label {
     font-size: 0.78rem;
-    font-weight: 500;
-    color: var(--ag-on-surface-variant);
+    font-weight: 600;
+    color: var(--ag-on-surface);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .m3-req {
+    color: var(--ag-danger);
+    font-weight: 700;
   }
 
   input:not([type='checkbox']):not([type='radio']):not([type='range']),
   select,
   textarea {
     width: 100%;
-    padding: 10px 14px;
+    min-height: 40px;
+    padding: 9px 14px;
     border-radius: 12px;
     border: 1px solid var(--ag-outline);
     background: var(--ag-surface-lowest);
@@ -354,7 +394,13 @@ table.m3-data-table {
     &:focus {
       outline: none;
       border-color: var(--ag-primary);
-      box-shadow: 0 0 0 2px rgba(168, 199, 250, 0.2);
+      box-shadow: 0 0 0 2px rgba(168, 199, 250, 0.25);
+    }
+
+    &[aria-invalid='true'],
+    &.invalid {
+      border-color: var(--ag-danger);
+      box-shadow: 0 0 0 2px rgba(255, 180, 171, 0.2);
     }
 
     &:disabled,
@@ -366,6 +412,61 @@ table.m3-data-table {
   .m3-hint {
     font-size: 0.72rem;
     color: var(--ag-on-surface-variant);
+    line-height: 1.45;
+  }
+
+  .m3-field-error {
+    font-size: 0.74rem;
+    font-weight: 600;
+    color: var(--ag-danger);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+}
+
+/* Unified List Search / Filter Toolbar (FE-011) */
+.m3-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+
+  .filter-left,
+  .filter-right {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .m3-search-input {
+    min-width: 220px;
+    height: 38px;
+    padding: 0 14px;
+    border-radius: 999px;
+    border: 1px solid var(--ag-outline);
+    background: var(--ag-surface-lowest);
+    color: var(--ag-on-surface);
+    font-size: 0.82rem;
+
+    &:focus {
+      outline: none;
+      border-color: var(--ag-primary);
+      box-shadow: 0 0 0 2px rgba(168, 199, 250, 0.2);
+    }
+  }
+
+  .m3-filter-select {
+    height: 38px;
+    padding: 0 12px;
+    border-radius: 999px;
+    border: 1px solid var(--ag-outline);
+    background: var(--ag-surface-lowest);
+    color: var(--ag-on-surface);
+    font-size: 0.8rem;
   }
 }
 
@@ -379,14 +480,15 @@ table.m3-data-table {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 20px;
+  padding: 16px;
   animation: m3FadeIn 150ms cubic-bezier(0.2, 0, 0, 1);
 }
 
 .m3-modal-dialog {
   width: 100%;
   max-width: 680px;
-  max-height: 90vh;
+  max-height: 88vh;
+  max-height: min(88dvh, 88vh);
   display: flex;
   flex-direction: column;
   background: var(--ag-surface-low);
@@ -406,15 +508,17 @@ table.m3-data-table {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 20px 24px 16px;
+    padding: 18px 24px 14px;
     border-bottom: 1px solid var(--ag-outline-variant);
+    flex-shrink: 0;
 
     h3 {
       margin: 0;
       font-family: var(--ag-font-display);
-      font-size: 1.1rem;
+      font-size: 1.08rem;
       font-weight: 700;
       display: flex;
+      flex-wrap: wrap;
       align-items: center;
       gap: 10px;
     }
@@ -423,6 +527,8 @@ table.m3-data-table {
   .m3-modal-body {
     padding: 20px 24px;
     overflow-y: auto;
+    flex: 1;
+    min-height: 0;
     display: flex;
     flex-direction: column;
     gap: 16px;
@@ -430,12 +536,14 @@ table.m3-data-table {
 
   .m3-modal-footer {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     justify-content: flex-end;
     gap: 10px;
-    padding: 16px 24px;
+    padding: 14px 24px;
     border-top: 1px solid var(--ag-outline-variant);
     background: var(--ag-surface);
+    flex-shrink: 0;
   }
 }
 
@@ -455,11 +563,19 @@ table.m3-data-table {
 }
 
 .m3-empty-state {
-  padding: 40px 24px;
+  padding: 36px 24px;
   text-align: center;
   color: var(--ag-on-surface-variant);
   background: var(--ag-surface-lowest);
   border: 1px dashed var(--ag-outline);
   border-radius: 18px;
   font-size: 0.85rem;
+}
+
+/* Offline Icon Ligature Overflow Safeguard (FE-017) */
+mat-icon {
+  overflow: hidden;
+  text-overflow: clip;
+  white-space: nowrap;
+  flex-shrink: 0;
 }

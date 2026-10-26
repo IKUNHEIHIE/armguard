@@ -1,13 +1,15 @@
 import { Component, OnInit, OnDestroy, inject, effect, signal } from '@angular/core'
-import { Router, NavigationEnd } from '@angular/router'
-import { filter } from 'rxjs/operators'
+import { Router, NavigationEnd, NavigationError } from '@angular/router'
 import { AgMaterialModule } from './core/material.module'
 import { AuthService } from './core/auth.service'
 import { SystemService } from './core/system.service'
 import { ThemeService } from './core/theme.service'
 import { ToastService } from './core/toast.service'
+import { TaskCenterService } from './core/task-center.service'
 import { ArmHardwareBadgeComponent } from './components/arm-hardware-badge.component'
 import { FloatingAiCompanionComponent } from './components/floating-ai-companion.component'
+import { AgConfirmDialogComponent } from './components/ag-confirm-dialog.component'
+import { AgTaskDrawerComponent } from './components/ag-task-drawer.component'
 
 interface NavItem {
   path: string
@@ -24,7 +26,13 @@ interface NavGroup {
 @Component({
   selector: 'ag-root',
   standalone: true,
-  imports: [AgMaterialModule, ArmHardwareBadgeComponent, FloatingAiCompanionComponent],
+  imports: [
+    AgMaterialModule,
+    ArmHardwareBadgeComponent,
+    FloatingAiCompanionComponent,
+    AgConfirmDialogComponent,
+    AgTaskDrawerComponent,
+  ],
   template: `
     <!-- Unauthenticated Route (Login) -->
     <ng-container *ngIf="isLoginRoute(); else m3Shell">
@@ -41,9 +49,10 @@ interface NavGroup {
           [opened]="!isMobile() || mobileDrawerOpen()"
           (closedStart)="mobileDrawerOpen.set(false)"
           class="m3-nav-drawer"
+          aria-label="主导航栏"
         >
           <div class="drawer-brand">
-            <div class="brand-logo">
+            <div class="brand-logo" aria-hidden="true">
               <mat-icon>developer_board</mat-icon>
             </div>
             <div class="brand-text">
@@ -52,9 +61,9 @@ interface NavGroup {
             </div>
           </div>
 
-          <div class="nav-groups">
+          <nav class="nav-groups" aria-label="功能模块导航">
             <div *ngFor="let grp of navGroups" class="nav-group">
-              <div class="group-label font-mono">{{ grp.group }}</div>
+              <div class="group-label">{{ grp.group }}</div>
               <a
                 *ngFor="let item of grp.items"
                 [routerLink]="item.path"
@@ -63,17 +72,21 @@ interface NavGroup {
                 class="m3-nav-item"
                 (click)="isMobile() && mobileDrawerOpen.set(false)"
               >
-                <mat-icon class="nav-icon">{{ item.icon }}</mat-icon>
+                <mat-icon class="nav-icon" aria-hidden="true">{{ item.icon }}</mat-icon>
                 <span class="nav-label">{{ item.label }}</span>
                 <span *ngIf="item.badge" class="nav-badge font-mono">{{ item.badge }}</span>
               </a>
             </div>
-          </div>
+          </nav>
 
           <!-- Bottom Host Summary Card in Sidenav -->
           <div class="drawer-footer font-mono">
-            <div class="host-chip">
-              <span class="dot" [class.live]="system.wsConnected()"></span>
+            <div class="host-chip" role="status" aria-live="polite">
+              <span
+                class="dot"
+                [class.live]="system.wsConnected()"
+                [class.warn]="system.isStale()"
+              ></span>
               <div class="host-info">
                 <div class="host-name">{{ system.info()?.hostname || 'armguard-node' }}</div>
                 <div class="host-arch">
@@ -92,6 +105,7 @@ interface NavGroup {
             <div class="appbar-left">
               <button
                 *ngIf="isMobile()"
+                type="button"
                 mat-icon-button
                 aria-label="打开或关闭侧边导航菜单"
                 (click)="mobileDrawerOpen.set(!mobileDrawerOpen())"
@@ -104,24 +118,56 @@ interface NavGroup {
             </div>
 
             <div class="appbar-right">
+              <!-- Global Task Center Pill (FE-006) -->
+              <button
+                type="button"
+                mat-stroked-button
+                class="task-pill font-mono"
+                [class.active]="taskCenter.activeCount() > 0"
+                aria-label="打开后台任务进度中心"
+                matTooltip="查看软件安装、镜像拉取与数据备份任务进度"
+                (click)="taskCenter.drawerOpen.set(true)"
+              >
+                <mat-icon class="task-icon">
+                  {{ taskCenter.activeCount() > 0 ? 'downloading' : 'assignment_turned_in' }}
+                </mat-icon>
+                <span class="hide-xs">
+                  {{
+                    taskCenter.activeCount() > 0
+                      ? '任务进行中 (' + taskCenter.activeCount() + ')'
+                      : '任务中心'
+                  }}
+                </span>
+                <span *ngIf="taskCenter.tasks().length > 0 && taskCenter.activeCount() === 0" class="task-count">
+                  {{ taskCenter.tasks().length }}
+                </span>
+              </button>
+
               <!-- ARM Silicon Hardware Sensor Badge -->
               <ag-arm-hardware-badge></ag-arm-hardware-badge>
 
               <!-- M3 Dark / Light Theme Switcher -->
               <button
+                type="button"
                 mat-icon-button
-                aria-label="切换 Material 3 深色或浅色主题"
+                aria-label="切换深色或浅色主题"
                 (click)="theme.toggleTheme()"
-                [matTooltip]="theme.mode() === 'dark' ? '切换至 Material 3 浅色模式' : '切换至 Material 3 深色模式'"
+                [matTooltip]="theme.mode() === 'dark' ? '切换至浅色模式' : '切换至深色模式'"
               >
                 <mat-icon>{{ theme.mode() === 'dark' ? 'light_mode' : 'dark_mode' }}</mat-icon>
               </button>
 
               <!-- Admin Account Menu -->
-              <button mat-stroked-button [matMenuTriggerFor]="userMenu" class="user-pill font-mono">
-                <mat-icon>account_circle</mat-icon>
+              <button
+                type="button"
+                mat-stroked-button
+                [matMenuTriggerFor]="userMenu"
+                class="user-pill font-mono"
+                aria-label="管理员账户菜单"
+              >
+                <mat-icon aria-hidden="true">account_circle</mat-icon>
                 <span>{{ auth.user()?.username || 'admin' }}</span>
-                <mat-icon>expand_more</mat-icon>
+                <mat-icon aria-hidden="true">expand_more</mat-icon>
               </button>
 
               <mat-menu #userMenu="matMenu" xPosition="before">
@@ -142,6 +188,23 @@ interface NavGroup {
             </div>
           </mat-toolbar>
 
+          <!-- Chunk Load / Navigation Error Recovery Banner (FE-015) -->
+          <div
+            *ngIf="navError()"
+            class="nav-error-banner font-mono"
+            role="alert"
+            aria-live="assertive"
+          >
+            <div class="err-left">
+              <mat-icon>cloud_off</mat-icon>
+              <span>{{ navError() }}</span>
+            </div>
+            <div class="err-actions">
+              <button type="button" mat-stroked-button (click)="retryNavigation()">重试加载</button>
+              <button type="button" mat-flat-button color="primary" (click)="reloadWindow()">刷新页面</button>
+            </div>
+          </div>
+
           <!-- Routed Page Viewport -->
           <main class="m3-viewport">
             <router-outlet></router-outlet>
@@ -152,16 +215,21 @@ interface NavGroup {
         </mat-sidenav-content>
       </mat-sidenav-container>
     </ng-template>
+
+    <!-- Global Unified Dialogs (FE-006 & FE-009) -->
+    <ag-confirm-dialog></ag-confirm-dialog>
+    <ag-task-drawer></ag-task-drawer>
   `,
   styles: [
     `
       .m3-shell-container {
         height: 100vh;
+        height: 100dvh;
         width: 100vw;
         background: var(--ag-bg) !important;
       }
       .m3-nav-drawer {
-        width: 268px !important;
+        width: 264px !important;
         background: var(--ag-surface-lowest) !important;
         border-right: 1px solid var(--ag-outline-variant) !important;
         display: flex;
@@ -206,17 +274,16 @@ interface NavGroup {
       }
       .group-label {
         padding: 0 16px 6px;
-        font-size: 0.68rem;
+        font-size: 0.72rem;
         font-weight: 700;
         color: var(--ag-on-surface-variant);
-        letter-spacing: 0.05em;
-        text-transform: uppercase;
+        letter-spacing: 0.03em;
       }
       .m3-nav-item {
         display: flex;
         align-items: center;
         gap: 12px;
-        height: 44px;
+        min-height: 44px;
         padding: 0 16px;
         border-radius: 999px;
         color: var(--ag-on-surface-variant);
@@ -271,10 +338,14 @@ interface NavGroup {
         height: 8px;
         border-radius: 50%;
         background: var(--ag-warning);
+        flex-shrink: 0;
       }
       .host-chip .dot.live {
         background: var(--ag-success);
         box-shadow: 0 0 8px var(--ag-success);
+      }
+      .host-chip .dot.warn {
+        background: var(--ag-danger);
       }
       .host-name {
         font-size: 0.78rem;
@@ -289,11 +360,13 @@ interface NavGroup {
         display: flex !important;
         flex-direction: column;
         height: 100vh;
+        height: 100dvh;
         background: var(--ag-bg) !important;
+        container-type: inline-size;
       }
       .m3-top-appbar {
-        height: 64px !important;
-        padding: 0 24px !important;
+        min-height: 64px !important;
+        padding: 0 20px !important;
         background: var(--ag-surface-lowest) !important;
         border-bottom: 1px solid var(--ag-outline-variant);
         display: flex;
@@ -316,20 +389,81 @@ interface NavGroup {
       .appbar-right {
         display: flex;
         align-items: center;
-        gap: 10px;
+        gap: 8px;
+      }
+      .task-pill {
+        border-radius: 999px !important;
+        height: 36px;
+        padding: 0 12px !important;
+        border-color: var(--ag-outline-variant) !important;
+        background: var(--ag-surface) !important;
+        font-size: 0.76rem;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .task-pill.active {
+        border-color: var(--ag-primary) !important;
+        background: var(--ag-primary-container) !important;
+        color: var(--ag-on-primary-container) !important;
+      }
+      .task-icon {
+        font-size: 16px;
+        width: 16px;
+        height: 16px;
+        color: var(--ag-primary);
+      }
+      .task-pill.active .task-icon {
+        color: var(--ag-on-primary-container);
+      }
+      .task-count {
+        background: var(--ag-surface-high);
+        color: var(--ag-on-surface);
+        padding: 1px 6px;
+        border-radius: 999px;
+        font-size: 0.68rem;
       }
       .user-pill {
         border-radius: 999px !important;
         height: 36px;
         border-color: var(--ag-outline-variant) !important;
       }
+      .nav-error-banner {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 10px 24px;
+        background: var(--ag-danger-container);
+        border-bottom: 1px solid var(--ag-danger);
+        color: var(--ag-danger);
+        font-size: 0.8rem;
+      }
+      .err-left {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .err-actions {
+        display: flex;
+        gap: 8px;
+      }
       .m3-viewport {
         flex: 1;
         overflow-y: auto;
-        padding: 24px;
+        padding: 20px 24px 88px;
         max-width: 1520px;
         width: 100%;
         margin: 0 auto;
+      }
+      @media (max-width: 680px) {
+        .hide-xs {
+          display: none;
+        }
+        .m3-viewport {
+          padding: 14px 14px 88px;
+        }
       }
     `,
   ],
@@ -338,13 +472,17 @@ export class AppComponent implements OnInit, OnDestroy {
   readonly auth = inject(AuthService)
   readonly system = inject(SystemService)
   readonly theme = inject(ThemeService)
+  readonly taskCenter = inject(TaskCenterService)
   private router = inject(Router)
   private toast = inject(ToastService)
 
   readonly isLoginRoute = signal(window.location.pathname.startsWith('/login'))
-  readonly isMobile = signal(window.innerWidth < 960)
+  readonly isMobile = signal(window.innerWidth < 1024)
   readonly mobileDrawerOpen = signal(false)
   readonly currentPageTitle = signal('系统概览与硅片监控')
+  readonly navError = signal<string | null>(null)
+  private lastFailedUrl: string | null = null
+  private sessionBootstrapped = false
 
   navGroups: NavGroup[] = [
     {
@@ -357,7 +495,7 @@ export class AppComponent implements OnInit, OnDestroy {
     {
       group: 'Web 与网络编排',
       items: [
-        { path: '/sites', label: '网站与 gRPC 反代', icon: 'language' },
+        { path: '/sites', label: '网站与反向代理', icon: 'language' },
         { path: '/stream', label: '四层端口转发', icon: 'swap_horiz', badge: 'L4' },
         { path: '/ssl', label: 'SSL 证书中心', icon: 'verified_user' },
       ],
@@ -365,7 +503,7 @@ export class AppComponent implements OnInit, OnDestroy {
     {
       group: '容器、数据与软件',
       items: [
-        { path: '/docker', label: 'Docker 与架构预检', icon: 'deployed_code' },
+        { path: '/docker', label: 'Docker 容器与镜像', icon: 'deployed_code' },
         { path: '/databases', label: '数据库管理', icon: 'database' },
         { path: '/appstore', label: 'ARM 软件商店', icon: 'apps' },
         { path: '/files', label: '文件资源管理器', icon: 'folder_open' },
@@ -382,25 +520,31 @@ export class AppComponent implements OnInit, OnDestroy {
     },
   ]
 
-  private resizeListener = () => this.isMobile.set(window.innerWidth < 960)
+  private resizeListener = () => this.isMobile.set(window.innerWidth < 1024)
 
   constructor() {
-    this.router.events
-      .pipe(filter((e): e is NavigationEnd => e instanceof NavigationEnd))
-      .subscribe((ev) => {
+    this.router.events.subscribe((ev) => {
+      if (ev instanceof NavigationEnd) {
+        this.navError.set(null)
         const url = ev.urlAfterRedirects || ev.url
-        this.isLoginRoute.set(url.startsWith('/login'))
+        const onLogin = url.startsWith('/login')
+        this.isLoginRoute.set(onLogin)
         this.updateTitleFromUrl(url)
-        if (!url.startsWith('/login') && localStorage.getItem('armguard_token')) {
-          this.bootstrapSession()
-        } else {
+        if (!onLogin && localStorage.getItem('armguard_token')) {
+          this.ensureSessionBootstrapped()
+        } else if (onLogin) {
+          this.sessionBootstrapped = false
           this.system.stopMonitoring()
         }
-      })
+      } else if (ev instanceof NavigationError) {
+        this.lastFailedUrl = ev.url
+        this.navError.set('页面模块资源加载失败（可能因网络波动或版本更新），请重试或刷新浏览器。')
+      }
+    })
 
     effect(() => {
       if (this.auth.isLoggedIn() && !this.isLoginRoute()) {
-        this.bootstrapSession()
+        this.ensureSessionBootstrapped()
       }
     })
   }
@@ -408,7 +552,7 @@ export class AppComponent implements OnInit, OnDestroy {
   ngOnInit() {
     window.addEventListener('resize', this.resizeListener)
     if (!this.isLoginRoute() && localStorage.getItem('armguard_token')) {
-      this.bootstrapSession()
+      this.ensureSessionBootstrapped()
     }
   }
 
@@ -417,17 +561,24 @@ export class AppComponent implements OnInit, OnDestroy {
     this.system.stopMonitoring()
   }
 
-  private bootstrapSession() {
+  private ensureSessionBootstrapped() {
+    this.system.startMonitoring()
+    if (this.sessionBootstrapped) return
+    this.sessionBootstrapped = true
     this.auth.refreshUserInfo()
     this.system.fetchPanelSettings()
     this.system.fetchInfo()
-    this.system.startMonitoring()
+    this.taskCenter.syncServerAppTasks()
   }
 
   private updateTitleFromUrl(url: string) {
+    const cleanUrl = url.split('?')[0]
     for (const grp of this.navGroups) {
       for (const item of grp.items) {
-        if ((item.path === '/' && url === '/') || (item.path !== '/' && url.startsWith(item.path))) {
+        if (
+          (item.path === '/' && cleanUrl === '/') ||
+          (item.path !== '/' && cleanUrl.startsWith(item.path))
+        ) {
           this.currentPageTitle.set(item.label)
           return
         }
@@ -435,7 +586,20 @@ export class AppComponent implements OnInit, OnDestroy {
     }
   }
 
+  retryNavigation() {
+    if (this.lastFailedUrl) {
+      this.router.navigateByUrl(this.lastFailedUrl)
+    } else {
+      this.navError.set(null)
+    }
+  }
+
+  reloadWindow() {
+    window.location.reload()
+  }
+
   async handleLogout() {
+    this.sessionBootstrapped = false
     this.system.stopMonitoring()
     await this.auth.logout()
     this.toast.info('已安全退出登录')

@@ -65,15 +65,16 @@ import { authApi } from '@/api/auth'
             </div>
           </div>
 
-          <div *ngIf="errorMsg()" class="error-banner font-mono">
+          <div *ngIf="errorMsg()" class="error-banner font-mono" role="alert">
             <mat-icon>error_outline</mat-icon>
             <span>{{ errorMsg() }}</span>
           </div>
 
           <form (ngSubmit)="handleLogin()" class="login-form">
             <div class="m3-field">
-              <label>管理员账号 (Username)</label>
+              <label for="login-username">管理员账号 (Username) <span class="m3-req">*</span></label>
               <input
+                id="login-username"
                 type="text"
                 [(ngModel)]="form.username"
                 name="username"
@@ -84,9 +85,10 @@ import { authApi } from '@/api/auth'
             </div>
 
             <div class="m3-field">
-              <label>登录密码 (Password)</label>
+              <label for="login-password">登录密码 (Password) <span class="m3-req">*</span></label>
               <div class="pwd-wrap">
                 <input
+                  id="login-password"
                   [type]="showPassword() ? 'text' : 'password'"
                   [(ngModel)]="form.password"
                   name="password"
@@ -99,6 +101,7 @@ import { authApi } from '@/api/auth'
                   mat-icon-button
                   class="eye-btn"
                   (click)="showPassword.set(!showPassword())"
+                  [attr.aria-label]="showPassword() ? '隐藏密码' : '显示密码'"
                 >
                   <mat-icon>{{ showPassword() ? 'visibility_off' : 'visibility' }}</mat-icon>
                 </button>
@@ -106,24 +109,26 @@ import { authApi } from '@/api/auth'
             </div>
 
             <div *ngIf="requireCaptcha()" class="m3-field">
-              <label>图形验证码</label>
+              <label for="login-captcha">图形验证码</label>
               <div class="captcha-row">
                 <input
+                  id="login-captcha"
                   type="text"
                   [(ngModel)]="form.captcha_code"
                   name="captcha_code"
                   placeholder="输入右侧验证码"
                 />
-                <div class="captcha-img" (click)="refreshCaptcha()" title="点击刷新验证码">
-                  <img *ngIf="captchaImage()" [src]="captchaImage()" alt="captcha" />
+                <div class="captcha-img" (click)="refreshCaptcha()" title="点击刷新验证码" tabindex="0" role="button" aria-label="点击刷新验证码">
+                  <img *ngIf="captchaImage()" [src]="captchaImage()" alt="图形验证码" />
                   <span *ngIf="!captchaImage()" class="font-mono">加载中...</span>
                 </div>
               </div>
             </div>
 
             <div *ngIf="requireTotp()" class="m3-field">
-              <label>双因素动态口令 (2FA TOTP)</label>
+              <label for="login-totp">双因素动态口令 (2FA TOTP)</label>
               <input
+                id="login-totp"
                 type="text"
                 [(ngModel)]="form.totp_code"
                 name="totp_code"
@@ -137,7 +142,7 @@ import { authApi } from '@/api/auth'
               color="primary"
               type="submit"
               class="submit-btn"
-              [disabled]="loading()"
+              [disabled]="loading() || !form.username || !form.password"
             >
               <mat-icon>{{ loading() ? 'hourglass_top' : 'login' }}</mat-icon>
               <span>{{ loading() ? '正在验证身份凭证...' : '安全登录控制台' }}</span>

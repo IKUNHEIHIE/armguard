@@ -8,6 +8,7 @@ export interface AppMarketItem {
   icon: string
   versions: string[]
   current_version?: string
+  installed_versions?: string[]
   install_source?: string
   protected_runtime?: boolean
   protected_reason?: string
@@ -55,11 +56,26 @@ export interface AppManagementData {
 }
 
 export const appStoreApi = {
-  getMarketList: () => apiClient.get<ApiResponse<{ list: AppMarketItem[] }>>('/apps/market'),
+  getMarketList: (refresh = false) =>
+    apiClient.get<ApiResponse<{ list: AppMarketItem[] }>>('/apps/market', {
+      params: refresh ? { refresh: '1' } : undefined,
+    }),
   getInstalledList: () => apiClient.get<ApiResponse<{ list: AppMarketItem[] }>>('/apps/installed'),
-  installApp: (key: string, version: string, compileFromSource = false) => apiClient.post<ApiResponse<{ task_id: string }>>(`/apps/${key}/install`, { version, compile_from_source: compileFromSource }),
+  getTasks: () =>
+    apiClient.get<ApiResponse<{ list: AppTaskProgress[] }>>('/apps/tasks', {
+      headers: { 'X-AG-Passive': '1' },
+    }),
+  installApp: (key: string, version: string, compileFromSource = false) =>
+    apiClient.post<ApiResponse<{ task_id: string }>>(`/apps/${key}/install`, {
+      version,
+      compile_from_source: compileFromSource,
+    }),
   uninstallApp: (key: string) => apiClient.post<ApiResponse<void>>(`/apps/${key}/uninstall`),
-  getTaskProgress: (key: string, taskId: string) => apiClient.get<ApiResponse<AppTaskProgress>>(`/apps/${key}/install-progress`, { params: { task_id: taskId } }),
+  getTaskProgress: (key: string, taskId: string) =>
+    apiClient.get<ApiResponse<AppTaskProgress>>(`/apps/${key}/install-progress`, {
+      params: { task_id: taskId },
+      headers: { 'X-AG-Passive': '1' },
+    }),
   
   // Management & Control APIs
   getAppManagement: (key: string, version?: string) => apiClient.get<ApiResponse<AppManagementData>>(`/apps/${key}/management`, { params: version ? { version } : undefined }),

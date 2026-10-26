@@ -3,131 +3,178 @@ import { Router } from '@angular/router'
 import { AgMaterialModule } from '../../core/material.module'
 import { SystemService } from '../../core/system.service'
 import { ToastService } from '../../core/toast.service'
+import { ConfirmService } from '../../core/confirm.service'
 import { TelemetryChartComponent } from '../../components/telemetry-chart.component'
+import { AgStateBannerComponent } from '../../components/ag-state-banner.component'
 import { appStoreApi, AppMarketItem } from '@/api/appstore'
 
 @Component({
   selector: 'ag-dashboard',
   standalone: true,
-  imports: [AgMaterialModule, TelemetryChartComponent],
+  imports: [AgMaterialModule, TelemetryChartComponent, AgStateBannerComponent],
   template: `
     <div class="m3-page">
-      <!-- 1. M3 Silicon Identity Hero Banner -->
-      <div class="m3-hero-banner">
-        <div class="hero-row">
-          <div class="hero-left">
-            <div class="silicon-icon">
-              <mat-icon>developer_board</mat-icon>
+      <!-- 1. Compact Host Health & Status Strip (FE-012 & FE-007) -->
+      <div class="m3-card host-summary-bar">
+        <div class="summary-main">
+          <div class="health-indicator" [ngClass]="overallHealth().tone">
+            <mat-icon aria-hidden="true">{{ overallHealth().icon }}</mat-icon>
+          </div>
+
+          <div class="host-primary">
+            <div class="host-headline">
+              <h2 class="host-title font-display">{{ boardDisplayName() }}</h2>
+              <span class="m3-badge" [ngClass]="overallHealth().badgeClass">
+                {{ overallHealth().label }}
+              </span>
+              <span class="m3-badge" [ngClass]="system.connectionBadgeClass()">
+                {{ system.connectionBadgeLabel() }}
+              </span>
+              <span class="m3-badge neutral font-mono">
+                运行 {{ formatUptime(system.info()?.uptime_seconds || 0) }}
+              </span>
             </div>
-            <div>
-              <div class="hero-badges font-mono">
-                <span class="m3-badge primary">{{ system.info()?.arch || 'ARM64' }}</span>
-                <span class="m3-badge success">● 在线运行 ({{ formatUptime(system.info()?.uptime_seconds || 0) }})</span>
-                <span *ngIf="system.monitorPolicy()?.eco_mode_active" class="m3-badge warning">
-                  Eco 节能采样 ({{ system.pollIntervalMs() }}ms)
-                </span>
-              </div>
-              <h2 class="hero-title font-display">
-                {{ boardDisplayName() }}
-              </h2>
-              <div class="hero-meta font-mono">
-                <span>主机名: <strong>{{ system.info()?.hostname || 'loading...' }}</strong></span>
-                <span>系统: <strong>{{ system.info()?.distribution || system.info()?.os || 'Linux' }}</strong></span>
-                <span>内核: <strong>{{ system.info()?.kernel || '-' }}</strong></span>
-                <span>处理器: <strong>{{ system.info()?.cpu_model || 'ARM SoC' }} ({{ system.info()?.cpu_cores || 1 }} Cores)</strong></span>
-              </div>
+
+            <div class="host-subline">
+              <span>主机: <strong class="font-mono">{{ system.info()?.hostname || '加载中...' }}</strong></span>
+              <span> · 架构: <strong class="font-mono">{{ system.info()?.arch || 'ARM64' }}</strong></span>
+              <span> · 系统: <strong>{{ system.info()?.distribution || system.info()?.os || 'Linux' }}</strong></span>
+              <span> · 最后采集: <strong class="font-mono">{{ system.lastUpdatedLabel() }}</strong></span>
             </div>
           </div>
 
-          <div class="hero-actions">
-            <button mat-stroked-button routerLink="/terminal">
+          <div class="summary-actions">
+            <button
+              type="button"
+              mat-button
+              (click)="showHostDetail.set(!showHostDetail())"
+              [attr.aria-expanded]="showHostDetail()"
+            >
+              <mat-icon>{{ showHostDetail() ? 'expand_less' : 'expand_more' }}</mat-icon>
+              <span>{{ showHostDetail() ? '收起硬件参数' : '硬件详情' }}</span>
+            </button>
+            <button type="button" mat-stroked-button routerLink="/terminal">
               <mat-icon>terminal</mat-icon>
               <span>Web 终端</span>
             </button>
-            <button mat-flat-button color="primary" (click)="refreshAll()">
+            <button
+              type="button"
+              mat-flat-button
+              color="primary"
+              [disabled]="refreshing()"
+              (click)="refreshAll()"
+            >
               <mat-icon>refresh</mat-icon>
-              <span>刷新状态</span>
+              <span>{{ refreshing() ? '刷新中...' : '刷新状态' }}</span>
             </button>
           </div>
         </div>
+
+        <!-- Expandable Hardware Details -->
+        <div *ngIf="showHostDetail()" class="host-detail-drawer font-mono">
+          <div>处理器型号: <strong>{{ system.info()?.cpu_model || 'ARM SoC' }} ({{ system.info()?.cpu_cores || 1 }} 核)</strong></div>
+          <div>内核版本: <strong>{{ system.info()?.kernel || '未知' }}</strong></div>
+          <div>调速器策略: <strong>{{ rt().cpu.governor || '默认' }} ({{ system.pollIntervalMs() }}ms 采样)</strong></div>
+          <div>面板版本: <strong>{{ system.info()?.panel_version || 'v0.2.0' }} ({{ system.info()?.build_commit || 'source' }})</strong></div>
+        </div>
+
+        <!-- Actionable Alerts Strip (when issues detected) -->
+        <div *ngIf="healthAlerts().length > 0" class="health-alerts-strip" role="alert">
+          <div *ngFor="let alert of healthAlerts()" class="alert-item">
+            <mat-icon aria-hidden="true">warning_amber</mat-icon>
+            <span>{{ alert }}</span>
+          </div>
+          <button
+            *ngIf="system.isStale()"
+            type="button"
+            mat-stroked-button
+            color="warn"
+            (click)="system.reconnectNow()"
+          >
+            立即重连遥测
+          </button>
+        </div>
       </div>
 
-      <!-- 2. Primary 4 M3 Metric Cards -->
+      <!-- 2. Primary 4 Metric Cards (Strict 4-Col Desktop / 2x2 Tablet Grid, FE-012) -->
       <div class="m3-grid-4">
         <!-- CPU Card -->
         <div class="m3-card metric-card">
           <div class="metric-top">
-            <span class="metric-label">CPU 算力负载</span>
-            <mat-icon class="metric-icon">memory</mat-icon>
+            <span class="metric-label">CPU 处理器负载</span>
+            <mat-icon class="metric-icon" aria-hidden="true">memory</mat-icon>
           </div>
           <div class="metric-value font-mono">
             {{
               rt().cpu.percent === null || rt().cpu.percent === undefined
-                ? '采集待就绪'
+                ? '暂无数据'
                 : rt().cpu.percent!.toFixed(1) + '%'
             }}
           </div>
           <mat-progress-bar
             mode="determinate"
             [value]="rt().cpu.percent ?? 0"
+            aria-label="CPU 使用率进度条"
           ></mat-progress-bar>
-          <div class="metric-foot font-mono">
-            <span>主频: {{ rt().cpu.frequency_mhz ? rt().cpu.frequency_mhz + ' MHz' : 'N/A' }}</span>
-            <span>{{ rt().cpu.governor || 'schedutil' }}</span>
+          <div class="metric-foot">
+            <span>主频: <strong class="font-mono">{{ rt().cpu.frequency_mhz ? rt().cpu.frequency_mhz + ' MHz' : '硬件不支持' }}</strong></span>
+            <span>{{ system.info()?.cpu_cores || coreList().length }} 核心</span>
           </div>
         </div>
 
         <!-- Memory Card -->
         <div class="m3-card metric-card">
           <div class="metric-top">
-            <span class="metric-label">物理内存 (RAM & Swap)</span>
-            <mat-icon class="metric-icon">storage</mat-icon>
+            <span class="metric-label">物理内存与交换区</span>
+            <mat-icon class="metric-icon" aria-hidden="true">storage</mat-icon>
           </div>
           <div class="metric-value font-mono">
             {{
               rt().memory.percent === null || rt().memory.percent === undefined
-                ? 'N/A'
+                ? '暂无数据'
                 : rt().memory.percent!.toFixed(1) + '%'
             }}
           </div>
           <mat-progress-bar
             mode="determinate"
             [value]="rt().memory.percent ?? 0"
+            aria-label="物理内存使用率进度条"
           ></mat-progress-bar>
-          <div class="metric-foot font-mono">
-            <span>{{ formatBytes(rt().memory.used) }} / {{ formatBytes(rt().memory.total) }}</span>
-            <span>Swap: {{ (rt().memory.swap_percent ?? 0).toFixed(0) + '%' }}</span>
+          <div class="metric-foot">
+            <span class="font-mono">{{ formatBytes(rt().memory.used) }} / {{ formatBytes(rt().memory.total) }}</span>
+            <span>交换区: <strong class="font-mono">{{ rt().memory.swap_percent === null ? '未启用' : rt().memory.swap_percent!.toFixed(0) + '%' }}</strong></span>
           </div>
         </div>
 
         <!-- Disk Card -->
         <div class="m3-card metric-card">
           <div class="metric-top">
-            <span class="metric-label">根分区存储与 I/O</span>
-            <mat-icon class="metric-icon">hard_drive</mat-icon>
+            <span class="metric-label">根分区存储与读写</span>
+            <mat-icon class="metric-icon" aria-hidden="true">hard_drive</mat-icon>
           </div>
           <div class="metric-value font-mono">
             {{
               rt().disk.percent === null || rt().disk.percent === undefined
-                ? 'N/A'
+                ? '暂无数据'
                 : rt().disk.percent!.toFixed(1) + '%'
             }}
           </div>
           <mat-progress-bar
             mode="determinate"
             [value]="rt().disk.percent ?? 0"
+            aria-label="根分区存储使用率进度条"
           ></mat-progress-bar>
-          <div class="metric-foot font-mono">
-            <span>{{ formatBytes(rt().disk.used) }} / {{ formatBytes(rt().disk.total) }}</span>
-            <span>R:{{ formatRate(rt().disk.read_bytes_sec) }} W:{{ formatRate(rt().disk.write_bytes_sec) }}</span>
+          <div class="metric-foot">
+            <span class="font-mono">{{ formatBytes(rt().disk.used) }} / {{ formatBytes(rt().disk.total) }}</span>
+            <span class="font-mono">读 {{ formatRate(rt().disk.read_bytes_sec) }} · 写 {{ formatRate(rt().disk.write_bytes_sec) }}</span>
           </div>
         </div>
 
-        <!-- Load Average & Network Summary Card -->
+        <!-- Load Average, Network & Thermal Summary Card -->
         <div class="m3-card metric-card">
           <div class="metric-top">
-            <span class="metric-label">系统平均负载 (Load Avg)</span>
-            <mat-icon class="metric-icon">speed</mat-icon>
+            <span class="metric-label">系统负载与网络吞吐</span>
+            <mat-icon class="metric-icon" aria-hidden="true">speed</mat-icon>
           </div>
           <div class="metric-value font-mono">
             {{ formatLoadAvg(rt().load_avg) }}
@@ -135,6 +182,7 @@ import { appStoreApi, AppMarketItem } from '@/api/appstore'
           <mat-progress-bar
             mode="determinate"
             [value]="loadBarPercent()"
+            aria-label="系统平均负载进度条"
           ></mat-progress-bar>
           <div class="metric-foot font-mono">
             <span>↓ {{ formatRate(rt().network.rx_bytes_sec) }}</span>
@@ -143,22 +191,25 @@ import { appStoreApi, AppMarketItem } from '@/api/appstore'
         </div>
       </div>
 
-      <!-- 3. Signature Element: ARM Silicon Per-Core & Thermal Diagnostic Strip -->
+      <!-- 3. Live ECharts Telemetry Canvas (Moved Up Above-the-Fold, FE-012) -->
+      <ag-telemetry-chart></ag-telemetry-chart>
+
+      <!-- 4. Compact Per-Core & Thermal Diagnostic Strip -->
       <div class="m3-card silicon-deck">
         <div class="deck-header">
           <div class="deck-title">
-            <mat-icon style="color: var(--ag-primary)">ssid_chart</mat-icon>
-            <span>ARM 多核拓扑与硅片热力学监控 (Silicon Die Telemetry)</span>
+            <mat-icon style="color: var(--ag-primary)" aria-hidden="true">ssid_chart</mat-icon>
+            <span>多核负载与芯片传感器状态</span>
           </div>
           <div class="deck-badges font-mono">
             <span class="m3-badge" [ngClass]="thermal().temp_c !== null ? 'primary' : 'neutral'">
-              核心温度: {{ thermal().temp_c !== null ? thermal().temp_c!.toFixed(1) + '°C' : '无传感器 (N/A)' }}
+              核心温度: {{ thermal().temp_c !== null ? thermal().temp_c!.toFixed(1) + '°C' : '无传感器' }}
             </span>
             <span class="m3-badge neutral">
-              供电电压: {{ thermal().voltage_v !== null && thermal().voltage_v !== undefined ? thermal().voltage_v!.toFixed(3) + ' V' : 'N/A' }}
+              供电电压: {{ thermal().voltage_v !== null && thermal().voltage_v !== undefined ? thermal().voltage_v!.toFixed(3) + ' V' : '硬件不支持' }}
             </span>
             <span class="m3-badge" [ngClass]="thermal().throttled ? 'danger' : 'success'">
-              {{ thermal().throttle_source ? (thermal().throttled ? '温控降频中' : 'vcgencmd 满血无降频') : '标准 Linux 热管理' }}
+              {{ thermal().throttle_source ? (thermal().throttled ? '温控降频中' : '供电与频点正常') : '标准 Linux 热管理' }}
             </span>
           </div>
         </div>
@@ -169,7 +220,7 @@ import { appStoreApi, AppMarketItem } from '@/api/appstore'
             class="core-pill"
           >
             <div class="core-top">
-              <span class="core-id">CPU{{ i }}</span>
+              <span class="core-id">核心 {{ i }}</span>
               <span class="core-val">{{ corePct === null ? '--' : corePct.toFixed(0) + '%' }}</span>
             </div>
             <div class="core-bar-bg">
@@ -183,37 +234,64 @@ import { appStoreApi, AppMarketItem } from '@/api/appstore'
         </div>
       </div>
 
-      <!-- 4. Live ECharts Telemetry Canvas -->
-      <ag-telemetry-chart></ag-telemetry-chart>
-
       <!-- 5. Bottom Two-Column Layout: Top Processes & Quick App Launcher -->
       <div class="m3-grid-2">
         <!-- Top Processes -->
         <div class="m3-card">
           <div class="section-header">
             <div class="section-title">
-              <mat-icon style="color: var(--ag-primary)">tune</mat-icon>
-              <span>实时活躍进程追踪 (Top Processes)</span>
+              <mat-icon style="color: var(--ag-primary)" aria-hidden="true">tune</mat-icon>
+              <span>高占用进程管理</span>
             </div>
             <div class="sort-controls">
               <button
+                type="button"
                 mat-stroked-button
                 [class.active-sort]="procSort() === 'cpu'"
                 (click)="changeProcessSort('cpu')"
               >
-                按 CPU 排序
+                按 CPU
               </button>
               <button
+                type="button"
                 mat-stroked-button
                 [class.active-sort]="procSort() === 'mem'"
                 (click)="changeProcessSort('mem')"
               >
-                按内存排序
+                按内存
+              </button>
+              <button
+                type="button"
+                mat-stroked-button
+                [matTooltip]="procAutoRefresh() ? '点击暂停每 5 秒自动刷新' : '点击恢复每 5 秒自动刷新'"
+                (click)="procAutoRefresh.set(!procAutoRefresh())"
+              >
+                {{ procAutoRefresh() ? '自动刷新: 开' : '自动刷新: 停' }}
               </button>
             </div>
           </div>
 
-          <div class="m3-table-wrap font-mono" style="margin-top: 12px">
+          <div class="m3-filter-bar" style="margin-top: 12px; margin-bottom: 8px">
+            <input
+              type="text"
+              [(ngModel)]="procSearch"
+              aria-label="按进程名、PID 或用户名筛选进程"
+              placeholder="筛选进程名、PID 或所属用户..."
+              class="m3-search-input"
+              style="flex: 1"
+            />
+          </div>
+
+          <ag-state-banner
+            *ngIf="system.processesError() && system.processes().length > 0"
+            state="partial_error"
+            title="进程列表刷新失败，当前显示上次记录"
+            [description]="system.processesError()!"
+            actionLabel="重试"
+            (action)="system.fetchProcesses(procSort(), 15, false)"
+          ></ag-state-banner>
+
+          <div class="m3-table-wrap font-mono" style="margin-top: 8px">
             <table class="m3-data-table">
               <thead>
                 <tr>
@@ -226,7 +304,7 @@ import { appStoreApi, AppMarketItem } from '@/api/appstore'
                 </tr>
               </thead>
               <tbody>
-                <tr *ngFor="let p of system.processes().slice(0, 10)">
+                <tr *ngFor="let p of filteredProcesses()">
                   <td>{{ p.pid }}</td>
                   <td>
                     <strong>{{ p.name }}</strong>
@@ -241,21 +319,23 @@ import { appStoreApi, AppMarketItem } from '@/api/appstore'
                   <td>
                     <div style="display: flex; gap: 4px; align-items: center">
                       <button
+                        type="button"
                         mat-button
                         color="primary"
                         [disabled]="p.pid <= 1"
-                        matTooltip="发送 SIGTERM 请求进程优雅退出并保存数据"
-                        aria-label="温和结束进程 (SIGTERM)"
+                        matTooltip="发送 SIGTERM (-15) 请求进程保存状态并优雅退出"
+                        [attr.aria-label]="'温和结束进程 ' + p.name + ' (SIGTERM)'"
                         (click)="handleKillProcess(p.pid, p.name, false)"
                       >
                         结束 (SIGTERM)
                       </button>
                       <button
+                        type="button"
                         mat-button
                         color="warn"
                         [disabled]="p.pid <= 1"
-                        matTooltip="发送 SIGKILL (-9) 强制立即杀死进程（可能丢失未保存数据）"
-                        aria-label="强制杀死进程 (SIGKILL)"
+                        matTooltip="发送 SIGKILL (-9) 强制立即终止进程（未保存数据可能丢失）"
+                        [attr.aria-label]="'强制终止进程 ' + p.name + ' (SIGKILL)'"
                         (click)="handleKillProcess(p.pid, p.name, true)"
                       >
                         强杀 (SIGKILL)
@@ -263,9 +343,12 @@ import { appStoreApi, AppMarketItem } from '@/api/appstore'
                     </div>
                   </td>
                 </tr>
-                <tr *ngIf="system.processes().length === 0">
-                  <td colspan="6" style="text-align: center; color: var(--ag-on-surface-variant)">
-                    正在加载宿主机活跃进程列表...
+                <tr *ngIf="system.processesLoading() && system.processes().length === 0">
+                  <td colspan="6" class="m3-empty-state">正在读取宿主机活跃进程列表...</td>
+                </tr>
+                <tr *ngIf="!system.processesLoading() && filteredProcesses().length === 0">
+                  <td colspan="6" class="m3-empty-state">
+                    {{ procSearch.trim() ? '没有匹配筛选条件的进程。' : '未读取到活跃进程记录。' }}
                   </td>
                 </tr>
               </tbody>
@@ -277,19 +360,31 @@ import { appStoreApi, AppMarketItem } from '@/api/appstore'
         <div class="m3-card">
           <div class="section-header">
             <div class="section-title">
-              <mat-icon style="color: var(--ag-primary)">apps</mat-icon>
-              <span>核心运行时与服务快捷矩阵</span>
+              <mat-icon style="color: var(--ag-primary)" aria-hidden="true">apps</mat-icon>
+              <span>核心运行环境与服务状态</span>
             </div>
-            <button mat-button color="primary" routerLink="/appstore">
+            <button type="button" mat-button color="primary" routerLink="/appstore">
               进入软件商店 →
             </button>
           </div>
 
-          <div class="apps-mini-grid" style="margin-top: 12px">
+          <ag-state-banner
+            *ngIf="appsError()"
+            state="error"
+            title="无法加载软件状态"
+            [description]="appsError()!"
+            actionLabel="重试"
+            (action)="loadQuickApps()"
+          ></ag-state-banner>
+
+          <div *ngIf="!appsError()" class="apps-mini-grid" style="margin-top: 12px">
             <div
               *ngFor="let app of quickApps()"
               class="m3-tonal-card app-mini-tile"
+              role="button"
+              tabindex="0"
               (click)="router.navigateByUrl('/appstore')"
+              (keydown.enter)="router.navigateByUrl('/appstore')"
             >
               <div class="app-mini-top">
                 <strong>{{ app.name }}</strong>
@@ -314,7 +409,7 @@ import { appStoreApi, AppMarketItem } from '@/api/appstore'
               </div>
               <div class="app-mini-desc">{{ app.description }}</div>
               <div class="app-mini-ver font-mono">
-                版本: {{ app.current_version || app.versions[0] || 'latest' }}
+                版本: {{ app.current_version || app.versions[0] || '默认版本' }}
               </div>
             </div>
           </div>
@@ -324,64 +419,102 @@ import { appStoreApi, AppMarketItem } from '@/api/appstore'
   `,
   styles: [
     `
-      .hero-row {
+      .host-summary-bar {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        padding: 16px 20px !important;
+      }
+      .summary-main {
         display: flex;
         flex-wrap: wrap;
         align-items: center;
         justify-content: space-between;
-        gap: 20px;
+        gap: 14px;
       }
-      .hero-left {
-        display: flex;
-        align-items: flex-start;
-        gap: 18px;
-      }
-      .silicon-icon {
-        width: 56px;
-        height: 56px;
-        border-radius: 18px;
-        background: var(--ag-primary-container);
-        color: var(--ag-on-primary-container);
+      .health-indicator {
+        width: 44px;
+        height: 44px;
+        border-radius: 14px;
         display: flex;
         align-items: center;
         justify-content: center;
         flex-shrink: 0;
+        background: var(--ag-success-container);
+        color: var(--ag-success);
       }
-      .silicon-icon mat-icon {
-        font-size: 30px;
-        width: 30px;
-        height: 30px;
+      .health-indicator.warning {
+        background: var(--ag-warning-container);
+        color: var(--ag-warning);
       }
-      .hero-badges {
+      .health-indicator.danger {
+        background: var(--ag-danger-container);
+        color: var(--ag-danger);
+      }
+      .host-primary {
+        flex: 1;
+        min-width: 260px;
+      }
+      .host-headline {
         display: flex;
         flex-wrap: wrap;
+        align-items: center;
         gap: 8px;
-        margin-bottom: 6px;
       }
-      .hero-title {
+      .host-title {
         margin: 0;
-        font-size: 1.45rem;
+        font-size: 1.18rem;
         font-weight: 800;
       }
-      .hero-meta {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 16px;
-        margin-top: 6px;
+      .host-subline {
+        margin-top: 4px;
         font-size: 0.78rem;
         color: var(--ag-on-surface-variant);
       }
-      .hero-meta strong {
+      .summary-actions {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px;
+      }
+      .host-detail-drawer {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 10px;
+        padding: 12px 14px;
+        border-radius: 14px;
+        background: var(--ag-surface);
+        border: 1px solid var(--ag-outline-variant);
+        font-size: 0.76rem;
+        color: var(--ag-on-surface-variant);
+      }
+      .host-detail-drawer strong {
         color: var(--ag-on-surface);
       }
-      .hero-actions {
+      .health-alerts-strip {
         display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
         gap: 10px;
+        padding: 10px 14px;
+        border-radius: 14px;
+        background: var(--ag-warning-container);
+        border: 1px solid var(--ag-warning);
+        font-size: 0.8rem;
+      }
+      .alert-item {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        color: var(--ag-warning);
+        font-weight: 600;
       }
       .metric-card {
         display: flex;
         flex-direction: column;
-        gap: 10px;
+        gap: 8px;
+        padding: 16px 18px !important;
       }
       .metric-top {
         display: flex;
@@ -397,7 +530,7 @@ import { appStoreApi, AppMarketItem } from '@/api/appstore'
         color: var(--ag-primary);
       }
       .metric-value {
-        font-size: 1.7rem;
+        font-size: 1.55rem;
         font-weight: 800;
         color: var(--ag-on-surface);
       }
@@ -405,13 +538,15 @@ import { appStoreApi, AppMarketItem } from '@/api/appstore'
         display: flex;
         align-items: center;
         justify-content: space-between;
-        font-size: 0.72rem;
+        gap: 6px;
+        font-size: 0.73rem;
         color: var(--ag-on-surface-variant);
       }
       .silicon-deck {
         display: flex;
         flex-direction: column;
-        gap: 14px;
+        gap: 12px;
+        padding: 16px 20px !important;
       }
       .deck-header {
         display: flex;
@@ -426,7 +561,7 @@ import { appStoreApi, AppMarketItem } from '@/api/appstore'
         gap: 8px;
         font-family: var(--ag-font-display);
         font-weight: 700;
-        font-size: 0.98rem;
+        font-size: 0.95rem;
       }
       .deck-badges {
         display: flex;
@@ -435,20 +570,20 @@ import { appStoreApi, AppMarketItem } from '@/api/appstore'
       }
       .core-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-        gap: 10px;
+        grid-template-columns: repeat(auto-fill, minmax(115px, 1fr));
+        gap: 8px;
       }
       .core-pill {
         background: var(--ag-surface);
         border: 1px solid var(--ag-outline-variant);
-        border-radius: 14px;
-        padding: 10px 12px;
+        border-radius: 12px;
+        padding: 8px 10px;
       }
       .core-top {
         display: flex;
         justify-content: space-between;
-        font-size: 0.75rem;
-        margin-bottom: 6px;
+        font-size: 0.74rem;
+        margin-bottom: 5px;
       }
       .core-id {
         color: var(--ag-on-surface-variant);
@@ -484,10 +619,11 @@ import { appStoreApi, AppMarketItem } from '@/api/appstore'
         gap: 8px;
         font-family: var(--ag-font-display);
         font-weight: 700;
-        font-size: 0.96rem;
+        font-size: 0.95rem;
       }
       .sort-controls {
         display: flex;
+        flex-wrap: wrap;
         gap: 6px;
       }
       .active-sort {
@@ -496,8 +632,8 @@ import { appStoreApi, AppMarketItem } from '@/api/appstore'
       }
       .apps-mini-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
-        gap: 12px;
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        gap: 10px;
       }
       .app-mini-tile {
         cursor: pointer;
@@ -533,12 +669,18 @@ export class DashboardComponent implements OnInit, OnDestroy {
   readonly system = inject(SystemService)
   readonly router = inject(Router)
   private toast = inject(ToastService)
+  private confirm = inject(ConfirmService)
 
   readonly rt = this.system.realtime
   readonly thermal = this.system.thermal
   readonly procSort = signal<'cpu' | 'mem'>('cpu')
+  readonly procAutoRefresh = signal<boolean>(true)
+  readonly showHostDetail = signal<boolean>(false)
+  readonly refreshing = signal<boolean>(false)
   readonly quickApps = signal<AppMarketItem[]>([])
+  readonly appsError = signal<string | null>(null)
 
+  procSearch = ''
   private procInterval: ReturnType<typeof setInterval> | null = null
 
   readonly boardDisplayName = computed(() => {
@@ -548,8 +690,58 @@ export class DashboardComponent implements OnInit, OnDestroy {
       this.thermal().board_model ||
       info?.cpu_model ||
       info?.hostname ||
-      'ARM Linux Server'
+      'ARM Linux 服务器'
     )
+  })
+
+  readonly healthAlerts = computed(() => {
+    const alerts: string[] = []
+    if (this.system.isStale()) {
+      alerts.push(`遥测连接中断或数据已过期 (${this.system.lastError() || '请检查面板网络'})`)
+    }
+    const cpu = this.rt().cpu.percent
+    if (cpu !== null && cpu >= 85) {
+      alerts.push(`CPU 负载偏高 (${cpu.toFixed(1)}%)`)
+    }
+    const mem = this.rt().memory.percent
+    if (mem !== null && mem >= 85) {
+      alerts.push(`物理内存占用偏高 (${mem.toFixed(1)}%)`)
+    }
+    const disk = this.rt().disk.percent
+    if (disk !== null && disk >= 85) {
+      alerts.push(`根分区磁盘空间不足 (${disk.toFixed(1)}%)`)
+    }
+    const th = this.thermal()
+    if (th.throttled || th.under_voltage || (th.temp_c !== null && th.temp_c >= 75)) {
+      alerts.push('检测到 ARM 芯片高温或降频告警')
+    }
+    return alerts
+  })
+
+  readonly overallHealth = computed(() => {
+    const alerts = this.healthAlerts()
+    if (this.system.connectionState() === 'offline') {
+      return {
+        tone: 'danger',
+        badgeClass: 'danger',
+        icon: 'cloud_off',
+        label: '遥测离线',
+      }
+    }
+    if (alerts.length > 0) {
+      return {
+        tone: 'warning',
+        badgeClass: 'warning',
+        icon: 'warning_amber',
+        label: `${alerts.length} 项待关注`,
+      }
+    }
+    return {
+      tone: 'ok',
+      badgeClass: 'success',
+      icon: 'verified',
+      label: '系统运行正常',
+    }
   })
 
   readonly coreList = computed(() => {
@@ -566,9 +758,25 @@ export class DashboardComponent implements OnInit, OnDestroy {
     return Math.min(100, Math.round((l1 / cores) * 100))
   })
 
+  filteredProcesses(): any[] {
+    const list = this.system.processes()
+    const q = this.procSearch.trim().toLowerCase()
+    const filtered = q
+      ? list.filter(
+          (p) =>
+            p.name.toLowerCase().includes(q) ||
+            String(p.pid).includes(q) ||
+            (p.user || '').toLowerCase().includes(q)
+        )
+      : list
+    return filtered.slice(0, 10)
+  }
+
   ngOnInit() {
     this.refreshAll()
     this.procInterval = setInterval(() => {
+      if (!this.procAutoRefresh()) return
+      if (typeof document !== 'undefined' && document.hidden) return
       this.system.fetchProcesses(this.procSort(), 15, true)
     }, 5000)
   }
@@ -578,21 +786,29 @@ export class DashboardComponent implements OnInit, OnDestroy {
   }
 
   async refreshAll() {
-    await Promise.all([
-      this.system.fetchInfo(),
-      this.system.fetchRealtime(),
-      this.system.fetchProcesses(this.procSort(), 15, true),
-      this.loadQuickApps(),
-    ])
+    this.refreshing.set(true)
+    try {
+      await Promise.all([
+        this.system.fetchInfo(true),
+        this.system.fetchRealtime(false),
+        this.system.fetchProcesses(this.procSort(), 15, false),
+        this.loadQuickApps(),
+      ])
+    } finally {
+      this.refreshing.set(false)
+    }
   }
 
   async loadQuickApps() {
+    this.appsError.set(null)
     try {
       const res = await appStoreApi.getMarketList()
       if (res.data?.data?.list) {
         this.quickApps.set(res.data.data.list.slice(0, 6))
       }
-    } catch {}
+    } catch (e: any) {
+      this.appsError.set(e?.message || '读取软件商店列表失败')
+    }
   }
 
   changeProcessSort(sort: 'cpu' | 'mem') {
@@ -601,8 +817,20 @@ export class DashboardComponent implements OnInit, OnDestroy {
   }
 
   async handleKillProcess(pid: number, name: string, force = false) {
-    const sigName = force ? 'SIGKILL (-9 强制终止，未落盘数据可能丢失)' : 'SIGTERM (-15 温和终止，允许应用保存状态)'
-    if (!confirm(`确定要向进程 ${name} (PID: ${pid}) 发送 ${sigName} 信号吗？`)) return
+    const res = await this.confirm.ask({
+      title: force ? '强制终止进程 (SIGKILL)' : '温和停止进程 (SIGTERM)',
+      resourceName: `${name} (PID: ${pid})`,
+      message: force
+        ? `确定要向进程 ${name} (PID: ${pid}) 发送 SIGKILL (-9) 强制终止信号吗？`
+        : `确定要向进程 ${name} (PID: ${pid}) 发送 SIGTERM (-15) 温和退出信号吗？`,
+      impact: force
+        ? 'SIGKILL 由 Linux 内核直接强行销毁进程，进程无法执行清理逻辑，未落盘的缓存或事务数据可能丢失。'
+        : 'SIGTERM 允许目标进程捕获信号、保存当前状态并关闭连接后优雅退出；若进程无响应，再使用强杀 (SIGKILL)。',
+      confirmText: force ? '发送 SIGKILL 强杀' : '发送 SIGTERM 结束',
+      tone: force ? 'danger' : 'warning',
+    })
+    if (!res.confirmed) return
+
     try {
       await this.system.killProcess(pid, force)
       this.toast.success(`已向进程 ${name} (PID ${pid}) 发送 ${force ? 'SIGKILL' : 'SIGTERM'} 信号`)
@@ -612,7 +840,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
   }
 
   formatBytes(bytes: number | null | undefined): string {
-    if (bytes === null || bytes === undefined || isNaN(bytes)) return 'N/A'
+    if (bytes === null || bytes === undefined || isNaN(bytes)) return '暂无数据'
     if (bytes === 0) return '0 B'
     const units = ['B', 'KB', 'MB', 'GB', 'TB']
     const i = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)))
@@ -620,17 +848,17 @@ export class DashboardComponent implements OnInit, OnDestroy {
   }
 
   formatRate(bytesPerSec: number | null | undefined): string {
-    if (bytesPerSec === null || bytesPerSec === undefined || isNaN(bytesPerSec)) return '0 KB/s'
+    if (bytesPerSec === null || bytesPerSec === undefined || isNaN(bytesPerSec)) return '暂无数据'
     return `${(bytesPerSec / 1024).toFixed(1)} KB/s`
   }
 
   formatLoadAvg(loads: [number | null, number | null, number | null] | undefined): string {
-    if (!loads || loads[0] === null) return 'N/A'
+    if (!loads || loads[0] === null) return '暂无数据'
     return loads.map((v) => (v === null ? '-' : v.toFixed(2))).join(' / ')
   }
 
   formatUptime(seconds: number): string {
-    if (!seconds) return '0m'
+    if (!seconds) return '0分钟'
     const d = Math.floor(seconds / 86400)
     const h = Math.floor((seconds % 86400) / 3600)
     const m = Math.floor((seconds % 3600) / 60)

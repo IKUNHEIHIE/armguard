@@ -1,6 +1,28 @@
 import os from 'os'
 import { spawnSync } from 'child_process'
 
+export function getDockerEnvStatus() {
+  try {
+    const verChild = spawnSync('docker', ['--version'], { encoding: 'utf-8', timeout: 3000 })
+    if (verChild.error || verChild.status !== 0) {
+      return { docker_installed: false, daemon_running: false, docker_version: null }
+    }
+    const verOut = `${verChild.stdout || ''}\n${verChild.stderr || ''}`.trim()
+    const m = verOut.match(/Docker version\s+([0-9.]+[a-zA-Z0-9._-]*)/i)
+    const version = m ? `${m[1]} (${os.arch()})` : verOut.split('\n')[0]
+
+    const infoChild = spawnSync('docker', ['ps', '-q'], { encoding: 'utf-8', timeout: 4000 })
+    const daemonRunning = !infoChild.error && infoChild.status === 0
+    return {
+      docker_installed: true,
+      daemon_running: daemonRunning,
+      docker_version: version
+    }
+  } catch {
+    return { docker_installed: false, daemon_running: false, docker_version: null }
+  }
+}
+
 export function getRealDockerContainers() {
   try {
     const child = spawnSync('docker', ['ps', '-a', '--format', '{{json .}}'], { encoding: 'utf-8' })
@@ -57,11 +79,26 @@ export async function handleDocker(pathname, req, res, url, ctx) {
 
   if (pathname === '/api/v1/docker/containers') {
     if (req.method === 'GET') {
-      const realContainers = getRealDockerContainers()
-      res.json({ list: realContainers, docker_installed: true, docker_version: '26.1.4 (aarch64)' })
+      const env = getDockerEnvStatus()
+      const realContainers = env.docker_installed && env.daemon_running ? getRealDockerContainers() : []
+      res.json({
+        list: realContainers,
+        docker_installed: env.docker_installed,
+        daemon_running: env.daemon_running,
+        docker_version: env.docker_version
+      })
       return true
     }
     if (req.method === 'POST') {
+      const env = getDockerEnvStatus()
+      if (!env.docker_installed) {
+        res.json(null, '当前宿主机尚未安装 Docker 引擎，请先前往软件商店安装 Docker', 400)
+        return true
+      }
+      if (!env.daemon_running) {
+        res.json(null, 'Docker 守护进程未运行，请先启动 docker.service', 400)
+        return true
+      }
       const body = await ctx.parseBody(req, res)
       const safeName = (body.name || '').replace(/[^a-zA-Z0-9_.-]/g, '')
       const safeImage = (body.image || '').replace(/[^a-zA-Z0-9_./:-]/g, '')
@@ -70,7 +107,19 @@ export async function handleDocker(pathname, req, res, url, ctx) {
         return true
       }
       const dockerArgs = ['run', '-d', '--name', safeName]
-      if (body.portMapping && /^[0-9]+:[0-9]+$/.test(body.portMapping)) {
+      if (body.restart_policy && ['no', 'always', 'unless-stopped', 'on-failure'].includes(body.restart_policy)) {
+        dockerArgs.push('--restart', body.restart_policy)
+      }
+      if (Array.isArray(body.ports)) {
+        for (const p of body.ports) {
+          const hp = Number(p?.host_port)
+          const cp = Number(p?.container_port)
+          const proto = p?.protocol === 'udp' ? 'udp' : 'tcp'
+          if (Number.isInteger(hp) && hp >= 1 && hp <= 65535 && Number.isInteger(cp) && cp >= 1 && cp <= 65535) {
+            dockerArgs.push('-p', `${hp}:${cp}/${proto}`)
+          }
+        }
+      } else if (body.portMapping && /^[0-9]+:[0-9]+$/.test(body.portMapping)) {
         dockerArgs.push('-p', body.portMapping)
       }
       if (body.volumeMapping && /^[a-zA-Z0-9_./-]+:[a-zA-Z0-9_./-]+$/.test(body.volumeMapping)) {
@@ -82,9 +131,9 @@ export async function handleDocker(pathname, req, res, url, ctx) {
         const child = spawnSync('docker', dockerArgs, { encoding: 'utf-8' })
         if (child.status === 0) {
           ctx.logOperation(ctx.currentUser(), '创建 Docker 容器', safeName)
-          res.json(null, '容器创建成功')
+          res.json({ container_id: (child.stdout || '').trim() }, '容器创建成功')
         } else {
-          res.json(null, child.stderr || '创建容器失败', 500)
+          res.json(null, (child.stderr || '').trim() || '创建容器失败', 500)
         }
       } catch (e) {
         res.json(null, e.message, 500)
@@ -124,8 +173,14 @@ export async function handleDocker(pathname, req, res, url, ctx) {
   }
 
   if (pathname === '/api/v1/docker/images') {
-    const realImages = getRealDockerImages()
-    res.json({ list: realImages })
+    const env = getDockerEnvStatus()
+    const realImages = env.docker_installed && env.daemon_running ? getRealDockerImages() : []
+    res.json({
+      list: realImages,
+      docker_installed: env.docker_installed,
+      daemon_running: env.daemon_running,
+      docker_version: env.docker_version
+    })
     return true
   }
 

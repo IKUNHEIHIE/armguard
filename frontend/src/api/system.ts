@@ -111,8 +111,14 @@ export interface ProcessItem {
 
 export const systemApi = {
   getSystemInfo: () => apiClient.get<ApiResponse<SystemInfo>>('/system/info'),
-  getRealtimeMonitor: () => apiClient.get<ApiResponse<RealtimeMonitorData>>('/system/monitor/realtime'),
-  getARMThermal: () => apiClient.get<ApiResponse<ARMThermalData>>('/system/hardware/thermal'),
+  getRealtimeMonitor: (passive = true) =>
+    apiClient.get<ApiResponse<RealtimeMonitorData>>('/system/monitor/realtime', {
+      headers: passive ? { 'X-AG-Passive': '1' } : undefined,
+    }),
+  getARMThermal: (passive = true) =>
+    apiClient.get<ApiResponse<ARMThermalData>>('/system/hardware/thermal', {
+      headers: passive ? { 'X-AG-Passive': '1' } : undefined,
+    }),
   getHistory: (range = '1h') => apiClient.get<ApiResponse<{ timestamps: string[]; cpu: number[]; memory: number[]; temp: number[]; net_rx: number[]; net_tx: number[] }>>('/system/monitor/history', { params: { range } }),
   getProcesses: (sortBy: 'cpu' | 'mem' = 'cpu', limit = 30, passive = false) =>
     apiClient.get<ApiResponse<{ list: ProcessItem[] }>>('/system/processes', {

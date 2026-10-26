@@ -8,14 +8,16 @@ import { SystemService } from '../core/system.service'
   imports: [AgMaterialModule],
   template: `
     <button
+      type="button"
       mat-stroked-button
       [matMenuTriggerFor]="thermalMenu"
       class="arm-die-pill font-mono"
       [class.warn]="hasAnyWarning()"
+      aria-label="查看 ARM 芯片温度、供电与降频诊断状态"
       matTooltip="查看 ARM 芯片传感器与供电状态"
     >
-      <span class="status-dot" [ngClass]="dotClass()"></span>
-      <mat-icon class="chip-icon">memory</mat-icon>
+      <span class="status-dot" [ngClass]="dotClass()" aria-hidden="true"></span>
+      <mat-icon class="chip-icon" aria-hidden="true">memory</mat-icon>
       <span class="temp-text">{{ tempDisplay() }}</span>
       <span *ngIf="hasAnyWarning()" class="warn-tag">告警</span>
     </button>
@@ -24,10 +26,10 @@ import { SystemService } from '../core/system.service'
       <div class="thermal-popover font-mono" (click)="$event.stopPropagation()">
         <div class="popover-header">
           <div class="title-row">
-            <mat-icon class="primary-icon">developer_board</mat-icon>
+            <mat-icon class="primary-icon" aria-hidden="true">developer_board</mat-icon>
             <div>
               <div class="title">ARM 硅片传感器诊断</div>
-              <div class="subtitle">{{ boardLabel() }}</div>
+              <div class="subtitle">{{ boardLabel() }} · 更新: {{ system.lastUpdatedLabel() }}</div>
             </div>
           </div>
           <span class="m3-badge" [ngClass]="statusBadgeClass()">
@@ -39,12 +41,12 @@ import { SystemService } from '../core/system.service'
           <div class="metric-tile">
             <span class="label">核心温度</span>
             <span class="value">{{ tempDisplay() }}</span>
-            <span class="sub">{{ thermal().temp_source || '未检测到传感器' }}</span>
+            <span class="sub">{{ thermal().temp_source || '硬件不支持/无传感器' }}</span>
           </div>
           <div class="metric-tile">
             <span class="label">核心工作频率</span>
             <span class="value">{{ freqDisplay() }}</span>
-            <span class="sub">调速器: {{ thermal().governor || 'N/A' }}</span>
+            <span class="sub">调速器: {{ thermal().governor || '硬件不支持' }}</span>
           </div>
           <div class="metric-tile">
             <span class="label">核心电压</span>
@@ -53,7 +55,7 @@ import { SystemService } from '../core/system.service'
           </div>
           <div class="metric-tile">
             <span class="label">节流寄存器</span>
-            <span class="value">{{ thermal().throttling_flags_hex || 'N/A' }}</span>
+            <span class="value">{{ thermal().throttling_flags_hex || '硬件不支持' }}</span>
             <span class="sub">Bitmask 掩码</span>
           </div>
         </div>
@@ -159,7 +161,7 @@ import { SystemService } from '../core/system.service'
         font-size: 0.85rem;
       }
       .subtitle {
-        font-size: 0.7rem;
+        font-size: 0.68rem;
         color: var(--ag-on-surface-variant);
       }
       .metrics-grid {
@@ -221,17 +223,17 @@ export class ArmHardwareBadgeComponent {
 
   readonly tempDisplay = computed(() => {
     const t = this.thermal().temp_c
-    return t === null || t === undefined ? '温度 N/A' : `${t.toFixed(1)}°C`
+    return t === null || t === undefined ? '温度未知' : `${t.toFixed(1)}°C`
   })
 
   readonly freqDisplay = computed(() => {
     const f = this.thermal().freq_mhz ?? this.system.realtime().cpu.frequency_mhz
-    return f === null || f === undefined ? 'N/A' : `${Math.round(f)} MHz`
+    return f === null || f === undefined ? '硬件不支持' : `${Math.round(f)} MHz`
   })
 
   readonly voltageDisplay = computed(() => {
     const v = this.thermal().voltage_v
-    return v === null || v === undefined ? 'N/A' : `${v.toFixed(3)} V`
+    return v === null || v === undefined ? '硬件不支持' : `${v.toFixed(3)} V`
   })
 
   readonly boardLabel = computed(() => {
@@ -244,6 +246,7 @@ export class ArmHardwareBadgeComponent {
   })
 
   dotClass() {
+    if (this.system.isStale()) return 'warm'
     const t = this.thermal().temp_c
     if (this.hasAnyWarning()) return 'hot'
     if (t === null || t === undefined) return 'unknown'
@@ -252,14 +255,16 @@ export class ArmHardwareBadgeComponent {
   }
 
   statusBadgeClass() {
+    if (this.system.isStale()) return 'warning'
     if (this.hasAnyWarning()) return 'danger'
     if (this.thermal().temp_c === null) return 'neutral'
     return 'success'
   }
 
   statusLabel() {
+    if (this.system.isStale()) return '数据已过期'
     if (this.hasAnyWarning()) return '过热/节流告警'
-    if (this.thermal().temp_c === null) return '传感器未就绪'
+    if (this.thermal().temp_c === null) return '无温度传感器'
     return '运行正常'
   }
 
@@ -272,6 +277,6 @@ export class ArmHardwareBadgeComponent {
   flagText(val: boolean | null | undefined, badText: string, okText: string) {
     if (val === true) return badText
     if (val === false) return okText
-    return '平台不支持'
+    return '硬件不支持'
   }
 }

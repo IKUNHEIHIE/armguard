@@ -1,13 +1,19 @@
-import { Component, OnInit, OnDestroy, inject, signal, computed } from '@angular/core'
+import { Component, OnInit, OnDestroy, computed, inject, signal } from '@angular/core'
+import { ActivatedRoute, Router } from '@angular/router'
 import { AgMaterialModule } from '../../core/material.module'
 import { ToastService } from '../../core/toast.service'
+import { ConfirmService } from '../../core/confirm.service'
+import { TaskCenterService } from '../../core/task-center.service'
+import { HasUnsavedChanges } from '../../core/unsaved-changes.guard'
+import { AgStateBannerComponent } from '../../components/ag-state-banner.component'
+import { AgModalComponent } from '../../components/ag-modal.component'
 import { WarpPluginDialogComponent } from '../../components/warp-plugin-dialog.component'
-import { appStoreApi, AppMarketItem, AppManagementData, AppTaskProgress } from '@/api/appstore'
+import { appStoreApi, AppMarketItem, AppManagementData } from '@/api/appstore'
 
 @Component({
   selector: 'ag-appstore',
   standalone: true,
-  imports: [AgMaterialModule, WarpPluginDialogComponent],
+  imports: [AgMaterialModule, AgStateBannerComponent, AgModalComponent, WarpPluginDialogComponent],
   template: `
     <div class="m3-page">
       <div class="m3-page-header">
@@ -25,91 +31,74 @@ import { appStoreApi, AppMarketItem, AppManagementData, AppTaskProgress } from '
             <mat-icon>cloud_sync</mat-icon>
             <span>Cloudflare WARP 插件</span>
           </button>
-          <button mat-flat-button color="primary" (click)="loadApps()">
+          <button mat-flat-button color="primary" (click)="loadApps()" [disabled]="loading()">
             <mat-icon>refresh</mat-icon>
             <span>刷新商店</span>
           </button>
         </div>
       </div>
 
-      <!-- Live Install Task Progress Panel (REV-013) -->
-      <div
-        *ngIf="activeTask()"
-        class="m3-card font-mono"
-        style="border-color: var(--ag-primary); display: flex; flex-direction: column; gap: 10px"
-      >
-        <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px">
-          <div style="display: flex; align-items: center; gap: 10px">
-            <mat-icon style="color: var(--ag-primary)">downloading</mat-icon>
-            <div>
-              <strong>软件安装任务跟踪 ({{ activeTask()!.app_key }} · {{ activeTask()!.task_id }})</strong>
-              <div style="font-size: 0.76rem; color: var(--ag-on-surface-variant)">
-                {{ activeTask()!.log_tail }}
-              </div>
-            </div>
-          </div>
-          <div style="display: flex; align-items: center; gap: 8px">
-            <span
-              class="m3-badge"
-              [ngClass]="
-                activeTask()!.stage === 'done'
-                  ? 'success'
-                  : activeTask()!.stage === 'failed' || activeTask()!.stage === 'unknown'
-                    ? 'danger'
-                    : 'primary'
-              "
-            >
-              {{
-                activeTask()!.stage === 'done'
-                  ? '✓ 安装完成'
-                  : activeTask()!.stage === 'failed'
-                    ? '✕ 安装失败'
-                    : activeTask()!.stage === 'unknown'
-                      ? '任务未知/已中断'
-                      : '安装进行中 (' + activeTask()!.progress_percent + '%)'
-              }}
-            </span>
-            <button
-              *ngIf="activeTask()!.stage !== 'installing'"
-              mat-icon-button
-              (click)="activeTask.set(null)"
-              aria-label="关闭安装任务面板"
-            >
-              <mat-icon>close</mat-icon>
-            </button>
-          </div>
+      <!-- Filter & Search Bar (FE-011) -->
+      <div class="m3-filter-bar font-mono">
+        <div class="search-box">
+          <mat-icon>search</mat-icon>
+          <input
+            type="search"
+            [ngModel]="searchQuery()"
+            (ngModelChange)="onSearchChange($event)"
+            placeholder="搜索软件名称、关键词或架构支持 (如 php, nginx, redis)..."
+            aria-label="搜索软件名称"
+          />
         </div>
-
-        <mat-progress-bar
-          mode="determinate"
-          [value]="activeTask()!.progress_percent"
-        ></mat-progress-bar>
-
-        <div
-          *ngIf="activeTask()!.logs && activeTask()!.logs!.length > 0"
-          style="max-height: 160px; overflow-y: auto; padding: 10px 12px; border-radius: 10px; background: var(--ag-surface-lowest); font-size: 0.74rem; line-height: 1.5"
-        >
-          <div *ngFor="let line of activeTask()!.logs">{{ line }}</div>
+        <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px">
+          <label for="appstore-status-filter" style="font-size: 0.75rem; color: var(--ag-on-surface-variant)">安装状态:</label>
+          <select
+            id="appstore-status-filter"
+            [ngModel]="statusFilter()"
+            (ngModelChange)="onStatusChange($event)"
+            aria-label="按安装状态过滤"
+            style="padding: 6px 10px; border-radius: 999px; border: 1px solid var(--ag-outline-variant); background: var(--ag-surface-lowest); color: var(--ag-on-surface); font-size: 0.76rem"
+          >
+            <option value="all">全部状态</option>
+            <option value="installed">仅已安装</option>
+            <option value="not_installed">未安装</option>
+          </select>
         </div>
       </div>
 
-      <!-- Category Filter Bar -->
-      <div class="m3-card" style="padding: 12px 18px !important">
+      <!-- Category Filter Bar (FE-011) -->
+      <div class="m3-card" style="padding: 10px 16px !important">
         <div style="display: flex; flex-wrap: wrap; gap: 8px">
           <button
             *ngFor="let c of categories"
             mat-stroked-button
             [style.background]="activeCategory() === c.key ? 'var(--ag-primary-container)' : ''"
             [style.color]="activeCategory() === c.key ? 'var(--ag-on-primary-container)' : ''"
-            (click)="activeCategory.set(c.key)"
+            (click)="onCategoryChange(c.key)"
           >
             {{ c.label }}
           </button>
         </div>
       </div>
 
-      <!-- Apps Grid -->
-      <div class="m3-grid-3">
+      <!-- State Banners (FE-001) -->
+      <ag-state-banner
+        *ngIf="loading() && apps().length === 0"
+        state="loading"
+        title="正在加载 ARM 软件商店应用列表..."
+      />
+
+      <ag-state-banner
+        *ngIf="loadError()"
+        state="error"
+        title="应用列表加载失败"
+        [description]="loadError()!"
+        primaryActionLabel="重试加载"
+        (primaryAction)="loadApps()"
+      />
+
+      <!-- Apps Grid (FE-012) -->
+      <div class="m3-grid-3" *ngIf="!loadError()">
         <div *ngFor="let app of filteredApps()" class="m3-card app-card">
           <div class="app-card-top">
             <div>
@@ -140,17 +129,22 @@ import { appStoreApi, AppMarketItem, AppManagementData, AppTaskProgress } from '
 
           <p class="app-desc">{{ app.description }}</p>
 
-          <!-- Accurate Version & Source Metadata (REV-014) -->
-          <div class="app-meta font-mono" style="flex-wrap: wrap; gap: 6px">
-            <span class="m3-badge neutral">
-              {{ app.install_source || (app.has_prebuilt ? 'APT 官方预编译包' : 'SBC 源码编译') }}
-            </span>
-            <span *ngIf="app.status === 'installed'" style="color: var(--ag-success); font-weight: 600">
-              当前实装: {{ app.current_version || '已安装' }}
-            </span>
-            <span *ngIf="app.status !== 'installed'" style="color: var(--ag-on-surface-variant)">
-              软件源提供: {{ app.versions[0] || 'APT 默认版本' }}
-            </span>
+          <!-- Multi-version PHP indicator (FE-008) & Source Metadata -->
+          <div class="app-meta font-mono" style="flex-direction: column; align-items: flex-start; gap: 4px">
+            <div style="display: flex; flex-wrap: wrap; gap: 6px; align-items: center">
+              <span class="m3-badge neutral">
+                {{ app.install_source || (app.has_prebuilt ? 'APT 官方预编译包' : 'SBC 源码编译') }}
+              </span>
+              <span *ngIf="app.status === 'installed'" style="color: var(--ag-success); font-weight: 600">
+                当前版本: {{ app.current_version || '已安装' }}
+              </span>
+              <span *ngIf="app.status !== 'installed'" style="color: var(--ag-on-surface-variant)">
+                可选版本: {{ app.versions.join(', ') || 'APT 默认版本' }}
+              </span>
+            </div>
+            <div *ngIf="app.key === 'php' && app.installed_versions && app.installed_versions.length > 0" style="font-size: 0.72rem; color: var(--ag-primary)">
+              已装 PHP 版本: <strong>{{ app.installed_versions.join(', ') }}</strong>
+            </div>
           </div>
 
           <div class="app-actions">
@@ -167,10 +161,10 @@ import { appStoreApi, AppMarketItem, AppManagementData, AppTaskProgress } from '
                 *ngIf="app.status !== 'installed'"
                 mat-flat-button
                 color="primary"
-                [disabled]="isTaskRunning()"
+                [disabled]="isInstallingApp(app.key) || taskCenter.hasActiveAptTask()"
                 (click)="installApp(app)"
               >
-                {{ isInstallingApp(app.key) ? '正在安装...' : '一键安装 (APT)' }}
+                {{ isInstallingApp(app.key) ? '正在后台安装...' : '一键安装 (APT)' }}
               </button>
               <button
                 *ngIf="app.status === 'installed'"
@@ -193,7 +187,7 @@ import { appStoreApi, AppMarketItem, AppManagementData, AppTaskProgress } from '
                 *ngIf="app.status === 'installed' && !app.protected_runtime && app.key !== 'nodejs'"
                 mat-button
                 color="warn"
-                [disabled]="isTaskRunning()"
+                [disabled]="isInstallingApp(app.key) || taskCenter.hasActiveAptTask()"
                 (click)="uninstallApp(app)"
               >
                 卸载
@@ -201,45 +195,63 @@ import { appStoreApi, AppMarketItem, AppManagementData, AppTaskProgress } from '
             </ng-container>
           </div>
         </div>
-      </div>
 
-      <!-- Manage App Modal -->
-      <div *ngIf="managingApp()" class="m3-modal-backdrop" (click)="managingApp.set(null)">
-        <div class="m3-modal-dialog lg" (click)="$event.stopPropagation()">
-          <div class="m3-modal-header">
-            <h3>
-              <mat-icon style="color: var(--ag-primary)">settings_applications</mat-icon>
-              <span>服务管理: {{ managingApp()!.app_name }} ({{ managingApp()!.service_name }})</span>
-            </h3>
-            <button mat-icon-button (click)="managingApp.set(null)" aria-label="关闭弹窗">
-              <mat-icon>close</mat-icon>
-            </button>
-          </div>
-          <div class="m3-modal-body font-mono">
-            <div class="m3-tonal-card" style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px">
-              <div>
-                状态: <strong>{{ managingApp()!.status }}</strong> | PID: {{ managingApp()!.pid }} |
-                内存: {{ managingApp()!.memory_mb }} MB
-              </div>
-              <div style="display: flex; gap: 8px">
-                <button mat-stroked-button (click)="controlService('start')">启动</button>
-                <button mat-stroked-button (click)="controlService('restart')">重启</button>
-                <button mat-stroked-button (click)="controlService('reload')">重载</button>
-                <button mat-stroked-button color="warn" (click)="controlService('stop')">停止</button>
-              </div>
-            </div>
-
-            <div class="m3-field">
-              <label>配置文件 ({{ managingApp()!.config_file_path }}) — 保存前自动执行语法校验，失败自动回滚</label>
-              <textarea rows="12" [(ngModel)]="managingApp()!.raw_config"></textarea>
-            </div>
-          </div>
-          <div class="m3-modal-footer">
-            <button mat-stroked-button (click)="managingApp.set(null)">关闭</button>
-            <button mat-flat-button color="primary" (click)="saveRawConfig()">保存配置并重载</button>
-          </div>
+        <div *ngIf="filteredApps().length === 0 && !loading()" class="m3-empty-state" style="grid-column: 1 / -1">
+          暂无匹配筛选条件的软件项目。
         </div>
       </div>
+
+      <!-- Manage App Modal with Dirty Protection (FE-002, FE-003, FE-009) -->
+      <ag-modal
+        [open]="!!managingApp()"
+        [title]="'服务管理: ' + (managingApp()?.app_name || '') + ' (' + (managingApp()?.service_name || '') + ')'"
+        icon="settings_applications"
+        size="lg"
+        [dirty]="isConfigDirty()"
+        [submitting]="savingConfig()"
+        (closed)="closeManage()"
+      >
+        <div class="font-mono" *ngIf="managingApp()" style="display: flex; flex-direction: column; gap: 14px">
+          <div class="m3-tonal-card" style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px">
+            <div>
+              状态: <strong>{{ managingApp()!.status }}</strong> | PID: {{ managingApp()!.pid }} |
+              内存: {{ managingApp()!.memory_mb }} MB
+            </div>
+            <div style="display: flex; gap: 8px">
+              <button mat-stroked-button (click)="controlService('start')">启动</button>
+              <button mat-stroked-button (click)="controlService('restart')">重启</button>
+              <button mat-stroked-button (click)="controlService('reload')">重载</button>
+              <button mat-stroked-button color="warn" (click)="controlService('stop')">停止</button>
+            </div>
+          </div>
+
+          <div class="m3-field">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px">
+              <label for="appstore-raw-config-editor">
+                配置文件 ({{ managingApp()!.config_file_path }}) — 保存前自动执行语法校验，失败自动回滚
+              </label>
+              <span *ngIf="isConfigDirty()" class="m3-badge warning">● 未保存修改</span>
+            </div>
+            <textarea
+              id="appstore-raw-config-editor"
+              rows="14"
+              [(ngModel)]="currentRawConfig"
+              style="line-height: 1.5; tab-size: 2"
+            ></textarea>
+          </div>
+        </div>
+        <div modal-footer>
+          <button mat-stroked-button (click)="closeManage()" [disabled]="savingConfig()">关闭</button>
+          <button
+            mat-flat-button
+            color="primary"
+            [disabled]="savingConfig() || !isConfigDirty()"
+            (click)="saveRawConfig()"
+          >
+            {{ savingConfig() ? '保存校验中...' : '保存配置并重载' }}
+          </button>
+        </div>
+      </ag-modal>
 
       <ag-warp-plugin-dialog
         [open]="warpOpen()"
@@ -273,8 +285,6 @@ import { appStoreApi, AppMarketItem, AppManagementData, AppTaskProgress } from '
       }
       .app-meta {
         display: flex;
-        align-items: center;
-        justify-content: space-between;
         font-size: 0.75rem;
       }
       .app-actions {
@@ -287,15 +297,28 @@ import { appStoreApi, AppMarketItem, AppManagementData, AppTaskProgress } from '
     `,
   ],
 })
-export class AppstoreComponent implements OnInit, OnDestroy {
+export class AppstoreComponent implements OnInit, OnDestroy, HasUnsavedChanges {
   private toast = inject(ToastService)
-  readonly apps = signal<AppMarketItem[]>([])
-  readonly activeCategory = signal('all')
-  readonly managingApp = signal<AppManagementData | null>(null)
-  readonly warpOpen = signal(false)
-  readonly activeTask = signal<AppTaskProgress | null>(null)
+  private confirmSvc = inject(ConfirmService)
+  readonly taskCenter = inject(TaskCenterService)
+  private route = inject(ActivatedRoute)
+  private router = inject(Router)
 
-  private taskPollTimer: ReturnType<typeof setInterval> | null = null
+  readonly apps = signal<AppMarketItem[]>([])
+  readonly loading = signal(false)
+  readonly loadError = signal<string | null>(null)
+  readonly activeCategory = signal('all')
+  readonly statusFilter = signal<'all' | 'installed' | 'not_installed'>('all')
+  readonly searchQuery = signal('')
+
+  readonly managingApp = signal<AppManagementData | null>(null)
+  readonly originalRawConfig = signal('')
+  currentRawConfig = ''
+  readonly savingConfig = signal(false)
+
+  readonly warpOpen = signal(false)
+
+  private unlistenTaskComplete: (() => void) | null = null
 
   categories = [
     { key: 'all', label: '全部软件' },
@@ -308,40 +331,96 @@ export class AppstoreComponent implements OnInit, OnDestroy {
 
   readonly filteredApps = computed(() => {
     const cat = this.activeCategory()
-    if (cat === 'all') return this.apps()
-    return this.apps().filter((a) => a.category === cat)
+    const st = this.statusFilter()
+    const q = this.searchQuery().trim().toLowerCase()
+
+    return this.apps().filter((a) => {
+      if (cat !== 'all' && a.category !== cat) return false
+      if (st === 'installed' && a.status !== 'installed') return false
+      if (st === 'not_installed' && a.status === 'installed') return false
+      if (q) {
+        const text = `${a.name} ${a.key} ${a.description} ${(a.arch_support || []).join(' ')}`.toLowerCase()
+        if (!text.includes(q)) return false
+      }
+      return true
+    })
   })
 
   ngOnInit() {
+    const qp = this.route.snapshot.queryParamMap
+    if (qp.get('cat')) this.activeCategory.set(qp.get('cat')!)
+    if (qp.get('st')) this.statusFilter.set(qp.get('st') as any)
+    if (qp.get('q')) this.searchQuery.set(qp.get('q')!)
+
     this.loadApps()
+    this.taskCenter.syncServerAppTasks()
+
+    this.unlistenTaskComplete = this.taskCenter.onTaskComplete((task) => {
+      if (task.type === 'app_install') {
+        this.loadApps()
+      }
+    })
   }
 
   ngOnDestroy() {
-    this.stopTaskPolling()
-  }
-
-  private stopTaskPolling() {
-    if (this.taskPollTimer) {
-      clearInterval(this.taskPollTimer)
-      this.taskPollTimer = null
+    if (this.unlistenTaskComplete) {
+      this.unlistenTaskComplete()
+      this.unlistenTaskComplete = null
     }
   }
 
-  isTaskRunning(): boolean {
-    return this.activeTask()?.stage === 'installing'
+  hasUnsavedChanges(): boolean {
+    return this.isConfigDirty()
+  }
+
+  isConfigDirty(): boolean {
+    return !!this.managingApp() && this.currentRawConfig !== this.originalRawConfig()
   }
 
   isInstallingApp(appKey: string): boolean {
-    const t = this.activeTask()
-    return Boolean(t && t.app_key === appKey && t.stage === 'installing')
+    return this.taskCenter.isAppInstalling(appKey)
+  }
+
+  onCategoryChange(cat: string) {
+    this.activeCategory.set(cat)
+    this.syncUrlParams()
+  }
+
+  onStatusChange(st: 'all' | 'installed' | 'not_installed') {
+    this.statusFilter.set(st)
+    this.syncUrlParams()
+  }
+
+  onSearchChange(q: string) {
+    this.searchQuery.set(q)
+    this.syncUrlParams()
+  }
+
+  private syncUrlParams() {
+    this.router.navigate([], {
+      relativeTo: this.route,
+      queryParams: {
+        cat: this.activeCategory() !== 'all' ? this.activeCategory() : null,
+        st: this.statusFilter() !== 'all' ? this.statusFilter() : null,
+        q: this.searchQuery().trim() || null,
+      },
+      queryParamsHandling: 'merge',
+      replaceUrl: true,
+    })
   }
 
   async loadApps() {
+    this.loading.set(true)
+    this.loadError.set(null)
     try {
       const res = await appStoreApi.getMarketList()
       this.apps.set(res.data?.data?.list || [])
     } catch (e: any) {
-      this.toast.error(e.message)
+      const msg = e.message || '加载应用商店失败'
+      this.loadError.set(msg)
+      this.toast.error(msg)
+    } finally {
+      this.loading.set(false)
     }
   }
 
@@ -354,51 +433,11 @@ export class AppstoreComponent implements OnInit, OnDestroy {
         this.toast.error('未获取到安装任务 ID')
         return
       }
-      this.activeTask.set({
-        task_id: taskId,
-        app_key: app.key,
-        stage: 'installing',
-        progress_percent: 20,
-        log_tail: `正在调用 APT 安装 ${app.name}...`,
-        logs: [`[armguard-pkg] 已创建安装任务 ${taskId}...`],
-      })
-      this.startTaskPolling(app.key, app.name, taskId)
+      this.taskCenter.trackAppInstall(taskId, app.key, app.name)
+      this.toast.info(`已在后台启动安装 ${app.name}，可随时在右上角任务中心查看进度`)
     } catch (e: any) {
       this.toast.error(e.message)
     }
-  }
-
-  private startTaskPolling(appKey: string, appName: string, taskId: string) {
-    this.stopTaskPolling()
-    this.taskPollTimer = setInterval(async () => {
-      try {
-        const res = await appStoreApi.getTaskProgress(appKey, taskId)
-        const d = res.data?.data
-        if (d) {
-          this.activeTask.set(d)
-          if (d.stage === 'done') {
-            this.stopTaskPolling()
-            this.toast.success(`${appName} 安装成功`)
-            this.loadApps()
-          } else if (d.stage === 'failed' || d.stage === 'unknown') {
-            this.stopTaskPolling()
-            this.toast.error(d.error_message || d.log_tail || `${appName} 安装失败`)
-            this.loadApps()
-          }
-        }
-      } catch (e: any) {
-        this.stopTaskPolling()
-        const cur = this.activeTask()
-        if (cur) {
-          this.activeTask.set({
-            ...cur,
-            stage: 'unknown',
-            log_tail: e.message || '安装任务状态查询失败或任务已过期',
-          })
-        }
-        this.toast.error(e.message)
-      }
-    }, 1200)
   }
 
   async uninstallApp(app: AppMarketItem) {
@@ -406,7 +445,16 @@ export class AppstoreComponent implements OnInit, OnDestroy {
       this.toast.warning(app.protected_reason || 'Node.js 为面板核心依赖，禁止卸载')
       return
     }
-    if (!confirm(`确定要卸载 ${app.name} 吗？`)) return
+    const res = await this.confirmSvc.ask({
+      title: '卸载软件确认',
+      resourceName: app.name,
+      message: `确定要卸载软件 “${app.name}” 吗？`,
+      impact: '卸载后该守护进程将被终止并从系统中移除包，已创建的配置文件可能会被清除。',
+      confirmText: '确认卸载',
+      severity: 'danger',
+    })
+    if (!res.confirmed) return
+
     try {
       await appStoreApi.uninstallApp(app.key)
       this.toast.success(`${app.name} 已成功卸载`)
@@ -420,21 +468,48 @@ export class AppstoreComponent implements OnInit, OnDestroy {
     try {
       const res = await appStoreApi.getAppManagement(app.key, app.current_version)
       if (res.data?.data) {
-        this.managingApp.set(res.data.data)
+        const d = res.data.data
+        this.managingApp.set(d)
+        this.currentRawConfig = d.raw_config || ''
+        this.originalRawConfig.set(d.raw_config || '')
       }
     } catch (e: any) {
       this.toast.error(e.message)
     }
   }
 
+  closeManage() {
+    this.managingApp.set(null)
+    this.currentRawConfig = ''
+    this.originalRawConfig.set('')
+  }
+
   async controlService(action: 'start' | 'stop' | 'restart' | 'reload') {
     const m = this.managingApp()
     if (!m) return
+
+    if (action === 'stop') {
+      const res = await this.confirmSvc.ask({
+        title: '停止服务确认',
+        resourceName: `${m.app_name} (${m.service_name})`,
+        message: `停止该服务将导致相关依赖网站或业务无法正常响应请求。`,
+        impact: '服务将被停用，直到手动重新启动。',
+        confirmText: '停止服务',
+        severity: 'warning',
+      })
+      if (!res.confirmed) return
+    }
+
     try {
       await appStoreApi.controlAppService(m.app_key, action)
       this.toast.success(`服务操作 (${action}) 已执行`)
       const res = await appStoreApi.getAppManagement(m.app_key)
-      if (res.data?.data) this.managingApp.set(res.data.data)
+      if (res.data?.data) {
+        const d = res.data.data
+        this.managingApp.set(d)
+        this.currentRawConfig = d.raw_config || ''
+        this.originalRawConfig.set(d.raw_config || '')
+      }
       this.loadApps()
     } catch (e: any) {
       this.toast.error(e.message)
@@ -444,16 +519,24 @@ export class AppstoreComponent implements OnInit, OnDestroy {
   async saveRawConfig() {
     const m = this.managingApp()
     if (!m) return
+    this.savingConfig.set(true)
     try {
-      await appStoreApi.saveRawConfig(m.app_key, m.config_file_path, m.raw_config)
-      this.toast.success('配置文件已通过校验并重载生效')
+      await appStoreApi.saveRawConfig(m.app_key, m.config_file_path, this.currentRawConfig)
+      this.originalRawConfig.set(this.currentRawConfig)
+      this.toast.success('配置文件已通过语法校验并成功重载生效')
     } catch (e: any) {
       this.toast.error(e.message)
       // Reload actual config from disk so rolled-back content is reflected in the editor
       try {
         const res = await appStoreApi.getAppManagement(m.app_key)
-        if (res.data?.data) this.managingApp.set(res.data.data)
+        if (res.data?.data) {
+          this.managingApp.set(res.data.data)
+          this.currentRawConfig = res.data.data.raw_config || ''
+          this.originalRawConfig.set(res.data.data.raw_config || '')
+        }
       } catch {}
+    } finally {
+      this.savingConfig.set(false)
     }
   }
 }

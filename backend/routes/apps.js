@@ -219,6 +219,7 @@ export function getMarketAppsWithStatus(force = false) {
     let isInstalled = false
     let currentVer = undefined
     let service_status = undefined
+    let installed_versions = undefined
 
     try {
       if (app.key === 'php') {
@@ -235,6 +236,7 @@ export function getMarketAppsWithStatus(force = false) {
             } catch {}
           }
         }
+        installed_versions = installedVers
 
         if (installedVers.length > 0 || fs.existsSync('/usr/bin/php')) {
           isInstalled = true
@@ -363,6 +365,7 @@ export function getMarketAppsWithStatus(force = false) {
       status: isInstalled ? 'installed' : 'not_installed',
       service_status,
       current_version: isInstalled ? currentVer : undefined,
+      installed_versions,
       install_source: '发行版 APT 官方源'
     }
   })
@@ -375,7 +378,13 @@ export async function handleApps(pathname, req, res, url, ctx) {
   if (!pathname.startsWith('/api/v1/apps/')) return false
 
   if (pathname === '/api/v1/apps/market') {
-    res.json({ list: getMarketAppsWithStatus() })
+    const force = url.searchParams.get('refresh') === '1'
+    res.json({ list: getMarketAppsWithStatus(force) })
+    return true
+  }
+
+  if (pathname === '/api/v1/apps/tasks' && req.method === 'GET') {
+    res.json({ list: Array.from(appInstallTasks.values()).slice(-20).reverse() })
     return true
   }
 
