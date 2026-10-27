@@ -24,7 +24,7 @@ export const routes: Routes = [
     loadComponent: () =>
       import('./pages/dashboard/dashboard.component').then((m) => m.DashboardComponent),
     canActivate: [authGuard],
-    title: '系统概览与硅片监控 - ArmGuard',
+    title: '首页 - ArmGuard',
   },
   {
     path: 'sites',
@@ -87,7 +87,7 @@ export const routes: Routes = [
       import('./pages/appstore/appstore.component').then((m) => m.AppstoreComponent),
     canActivate: [authGuard],
     canDeactivate: [unsavedChangesGuard],
-    title: 'ARM 软件商店 - ArmGuard',
+    title: '软件商店 - ArmGuard',
   },
   {
     path: 'security',

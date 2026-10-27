@@ -20,7 +20,7 @@ import { appStoreApi, AppMarketItem, AppManagementData } from '@/api/appstore'
         <div>
           <h2 class="m3-page-title">
             <mat-icon style="color: var(--ag-primary)">apps</mat-icon>
-            <span>ARM 原生软件商店与守护进程编排 (App Store)</span>
+            <span>软件商店</span>
           </h2>
           <p class="m3-page-subtitle font-mono">
             提供 ARM64 / ARMv7 预编译包一键安装、服务启停、配置文件在线微调与 Cloudflare WARP 网关
@@ -85,7 +85,7 @@ import { appStoreApi, AppMarketItem, AppManagementData } from '@/api/appstore'
       <ag-state-banner
         *ngIf="loading() && apps().length === 0"
         state="loading"
-        title="正在加载 ARM 软件商店应用列表..."
+        title="正在加载软件商店应用列表..."
       />
 
       <ag-state-banner

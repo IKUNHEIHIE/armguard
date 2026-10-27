@@ -479,7 +479,7 @@ export class AppComponent implements OnInit, OnDestroy {
   readonly isLoginRoute = signal(window.location.pathname.startsWith('/login'))
   readonly isMobile = signal(window.innerWidth < 1024)
   readonly mobileDrawerOpen = signal(false)
-  readonly currentPageTitle = signal('系统概览与硅片监控')
+  readonly currentPageTitle = signal('首页')
   readonly navError = signal<string | null>(null)
   private lastFailedUrl: string | null = null
   private sessionBootstrapped = false
@@ -488,7 +488,7 @@ export class AppComponent implements OnInit, OnDestroy {
     {
       group: '监控与概览',
       items: [
-        { path: '/', label: '硅片概览与遥测', icon: 'space_dashboard', badge: 'M3' },
+        { path: '/', label: '首页', icon: 'space_dashboard', badge: 'M3' },
         { path: '/terminal', label: 'Web SSH 终端', icon: 'terminal' },
       ],
     },
@@ -505,7 +505,7 @@ export class AppComponent implements OnInit, OnDestroy {
       items: [
         { path: '/docker', label: 'Docker 容器与镜像', icon: 'deployed_code' },
         { path: '/databases', label: '数据库管理', icon: 'database' },
-        { path: '/appstore', label: 'ARM 软件商店', icon: 'apps' },
+        { path: '/appstore', label: '软件商店', icon: 'apps' },
         { path: '/files', label: '文件资源管理器', icon: 'folder_open' },
       ],
     },
