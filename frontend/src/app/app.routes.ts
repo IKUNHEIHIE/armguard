@@ -98,6 +98,14 @@ export const routes: Routes = [
     title: '安全防护 - ArmGuard',
   },
   {
+    path: 'toolbox',
+    loadComponent: () =>
+      import('./pages/toolbox/toolbox.component').then((m) => m.ToolboxComponent),
+    canActivate: [authGuard],
+    canDeactivate: [unsavedChangesGuard],
+    title: '工具箱 - ArmGuard',
+  },
+  {
     path: 'crontab',
     loadComponent: () =>
       import('./pages/crontab/crontab.component').then((m) => m.CrontabComponent),

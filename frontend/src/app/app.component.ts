@@ -513,6 +513,7 @@ export class AppComponent implements OnInit, OnDestroy {
       group: '安全与系统运维',
       items: [
         { path: '/security', label: '防火墙与 SSH 加固', icon: 'security' },
+        { path: '/toolbox', label: '工具箱', icon: 'handyman' },
         { path: '/crontab', label: '计划任务 (Cron)', icon: 'schedule' },
         { path: '/logs', label: '审计与系统日志', icon: 'receipt_long' },
         { path: '/settings', label: '面板核心设置', icon: 'tune' },

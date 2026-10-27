@@ -719,3 +719,136 @@ test('AG-PERF-01: compress → decompress round-trip preserves file contents (as
     fs.rmSync(workDir, { recursive: true, force: true });
   }
 });
+
+test('TOOLBOX: DNS/hosts/mirrors 校验、备份与路径白名单（不触碰真实系统文件）', async () => {
+  const tb = await import('../routes/toolbox.js');
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'ag-toolbox-'));
+  const zoneinfo = path.join(work, 'zoneinfo');
+  fs.mkdirSync(path.join(zoneinfo, 'Asia'), { recursive: true });
+  fs.writeFileSync(path.join(zoneinfo, 'Asia', 'Shanghai'), 'TZif');
+  fs.writeFileSync(path.join(zoneinfo, 'UTC'), 'TZif');
+
+  const resolv = path.join(work, 'resolv.conf');
+  const hosts = path.join(work, 'hosts');
+  const sourcesList = path.join(work, 'sources.list');
+  const sourcesDir = path.join(work, 'sources.list.d');
+  const osRelease = path.join(work, 'os-release');
+  const fstab = path.join(work, 'fstab');
+  const swappiness = path.join(work, 'swappiness');
+
+  fs.mkdirSync(sourcesDir, { recursive: true });
+  fs.writeFileSync(resolv, 'nameserver 192.168.1.1\nnameserver fe80::1%wlan0\n', 'utf8');
+  fs.writeFileSync(hosts, '127.0.0.1 localhost\n::1 localhost ip6-localhost\n', 'utf8');
+  fs.writeFileSync(sourcesList, 'deb https://deb.debian.org/debian trixie main contrib non-free-firmware\n', 'utf8');
+  fs.writeFileSync(osRelease, 'ID=debian\nVERSION_CODENAME=trixie\nPRETTY_NAME="Debian GNU/Linux 13 (trixie)"\n', 'utf8');
+  fs.writeFileSync(fstab, '/dev/sda18 / ext4 defaults 0 1\n', 'utf8');
+  fs.writeFileSync(swappiness, '60', 'utf8');
+
+  const ctx = {
+    RESOLV_CONF: resolv,
+    HOSTS_FILE: hosts,
+    SOURCES_LIST: sourcesList,
+    SOURCES_DIR: sourcesDir,
+    OS_RELEASE: osRelease,
+    ZONEINFO_DIR: zoneinfo,
+    FSTAB: fstab,
+    SWAPPINESS_FILE: swappiness,
+    SWAP_FILE: path.join(work, 'swapfile'),
+    parseBody: async () => ({}),
+    currentUser: () => 'opsadmin',
+    logOperation: () => {},
+  };
+
+  async function call(route, method, body) {
+    let resp = null;
+    const u = new URL('http://127.0.0.1' + route);
+    const handled = await tb.handleToolbox(
+      u.pathname,
+      { method, headers: {} },
+      { json: (data = null, message = 'ok', code = 0) => { resp = { code, message, data }; } },
+      u,
+      { ...ctx, parseBody: async () => body }
+    );
+    return { handled, resp };
+  }
+
+  try {
+    // --- 纯函数校验 ---
+    assert.equal(tb.isValidIp('223.5.5.5'), true);
+    assert.equal(tb.isValidIp('2400:3200::1'), true);
+    assert.equal(tb.isValidIp('999.1.1.1'), false);
+    assert.equal(tb.isValidIp('1.1.1.1; rm -rf /'), false);
+    assert.equal(tb.isValidTimezone('Asia/Shanghai', zoneinfo), true);
+    assert.equal(tb.isValidTimezone('../../etc/passwd', zoneinfo), false);
+    assert.equal(tb.isValidTimezone('Asia/Nowhere', zoneinfo), false);
+    assert.equal(tb.isValidMirrorUrl('https://mirrors.aliyun.com/debian'), true);
+    assert.equal(tb.isValidMirrorUrl('file:///etc/passwd'), false);
+    assert.equal(tb.isValidMirrorUrl('https://evil.com/a b'), false);
+    assert.deepEqual(tb.parseResolvConf('nameserver 8.8.8.8\nnameserver bad\n'), ['8.8.8.8']);
+
+    // --- GET DNS：读出现有 nameserver（含 IPv6 作用域） ---
+    const dnsGet = await call('/api/v1/toolbox/dns', 'GET');
+    assert.equal(dnsGet.resp.code, 0);
+    assert.deepEqual(dnsGet.resp.data.servers, ['192.168.1.1', 'fe80::1%wlan0']);
+
+    // --- PUT DNS：非法地址必须 400 且不写文件 ---
+    const before = fs.readFileSync(resolv, 'utf8');
+    const dnsBad = await call('/api/v1/toolbox/dns', 'PUT', { servers: ['8.8.8.8', 'not-an-ip'] });
+    assert.equal(dnsBad.resp.code, 400);
+    assert.equal(fs.readFileSync(resolv, 'utf8'), before);
+
+    // --- PUT DNS：合法地址写入并生成备份 ---
+    const dnsOk = await call('/api/v1/toolbox/dns', 'PUT', { servers: ['223.5.5.5', '119.29.29.29'] });
+    assert.equal(dnsOk.resp.code, 0, dnsOk.resp.message);
+    const resolvAfter = fs.readFileSync(resolv, 'utf8');
+    assert.match(resolvAfter, /nameserver 223\.5\.5\.5/);
+    assert.match(resolvAfter, /nameserver 119\.29\.29\.29/);
+    const resolvBackups = fs.readdirSync(work).filter(n => n.startsWith('resolv.conf.armguard-bak-'));
+    assert.equal(resolvBackups.length >= 1, true, 'DNS 写入前必须生成备份');
+
+    // --- hosts：非法内容拒绝，合法内容写入 ---
+    const hostsBad = await call('/api/v1/toolbox/hosts', 'PUT', { content: 'not-an-ip example.com\n' });
+    assert.equal(hostsBad.resp.code, 400);
+    const hostsOk = await call('/api/v1/toolbox/hosts', 'PUT', {
+      content: '127.0.0.1 localhost\n10.0.0.9 nas.lan nas\n',
+    });
+    assert.equal(hostsOk.resp.code, 0, hostsOk.resp.message);
+    assert.match(fs.readFileSync(hosts, 'utf8'), /10\.0\.0\.9 nas\.lan nas/);
+
+    // --- 镜像源：预设列表 + 切换阿里源 ---
+    const mirrorGet = await call('/api/v1/toolbox/mirrors', 'GET');
+    assert.equal(mirrorGet.resp.code, 0);
+    assert.deepEqual(
+      mirrorGet.resp.data.presets.map(p => p.id),
+      ['official', 'huawei', 'aliyun', 'tsinghua']
+    );
+    assert.equal(mirrorGet.resp.data.os.codename, 'trixie');
+
+    const mirrorBad = await call('/api/v1/toolbox/mirrors', 'PUT', {
+      mirror_id: 'custom',
+      url: 'file:///etc/passwd',
+    });
+    assert.equal(mirrorBad.resp.code, 400);
+
+    const mirrorOk = await call('/api/v1/toolbox/mirrors', 'PUT', { mirror_id: 'aliyun' });
+    assert.equal(mirrorOk.resp.code, 0, mirrorOk.resp.message);
+    const srcAfter = fs.readFileSync(sourcesList, 'utf8');
+    assert.match(srcAfter, /mirrors\.aliyun\.com\/debian trixie /);
+    assert.match(srcAfter, /mirrors\.aliyun\.com\/debian-security trixie-security /);
+    assert.equal(
+      fs.readdirSync(work).some(n => n.startsWith('sources.list.armguard-bak-')),
+      true,
+      '切换源前必须备份'
+    );
+
+    // --- 时区：非法值拒绝 ---
+    const tzBad = await call('/api/v1/toolbox/timezone', 'PUT', { timezone: '../../etc/passwd' });
+    assert.equal(tzBad.resp.code, 400);
+
+    // --- 非工具箱路径必须放行给后续路由 ---
+    const other = await call('/api/v1/system/info', 'GET');
+    assert.equal(other.handled, false);
+  } finally {
+    fs.rmSync(work, { recursive: true, force: true });
+  }
+});

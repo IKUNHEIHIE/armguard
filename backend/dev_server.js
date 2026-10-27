@@ -28,6 +28,7 @@ import { handleSSL } from './routes/ssl.js'
 import { handleAI, isAiConfigured, callUpstreamLLM, getSystemContextPrompt, DEFAULT_AI_CONFIG } from './routes/ai.js'
 import { handleWarp, initWarpConfig, getRealWarpTrace, getWarpSystemHealth, warpConfig } from './routes/warp.js'
 import { handleStream } from './routes/stream.js'
+import { handleToolbox } from './routes/toolbox.js'
 
 let pty = null
 try {
@@ -829,6 +830,7 @@ async function handleHttpRequest(req, res) {
     if (await handleAI(pathname, req, res, url, ctx)) return
     if (await handleWarp(pathname, req, res, url, ctx)) return
     if (await handleStream(pathname, req, res, url, ctx)) return
+    if (await handleToolbox(pathname, req, res, url, ctx)) return
 
     // Fallback for unmatched API endpoints - standard 404
     res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8' })
