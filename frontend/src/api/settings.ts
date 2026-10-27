@@ -20,6 +20,7 @@ export interface PanelSettings {
   login_lock_minutes?: number
   eco_mode_enabled: boolean
   eco_mode_threshold_mb?: number
+  log_retention_days?: number
   current_version: string
   build_commit?: string
   latest_version: string

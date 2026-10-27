@@ -181,6 +181,26 @@ function logOperation(username, action, target, ip = null, status = 'success') {
   }, 1000)
 }
 
+/**
+ * 按保留天数清理面板审计日志（operations.json）。
+ * 条目里的 id 是写入时的 Date.now()，比本地化格式的 created_at 更适合做时间比较。
+ */
+function pruneOperationsLog(days) {
+  const keepDays = Math.min(365, Math.max(1, Number(days) || 15))
+  const keepMs = keepDays * 24 * 60 * 60 * 1000
+  const now = Date.now()
+  const list = loadJSON(OPS_LOG_FILE, [])
+  if (!Array.isArray(list) || list.length === 0) return 0
+  const kept = list.filter(e => !e?.id || now - Number(e.id) <= keepMs)
+  const removed = list.length - kept.length
+  if (removed > 0) {
+    saveJSON(OPS_LOG_FILE, kept)
+    cachedOpsLogs = kept
+    console.log(`[ArmGuard] 审计日志清理: 移除 ${removed} 条超过 ${keepDays} 天的记录`)
+  }
+  return removed
+}
+
 // -----------------------------------------------------------------------------
 // Sessions (AG-009 idle timeout / AG-011 real identity)
 // -----------------------------------------------------------------------------
@@ -557,6 +577,7 @@ const SETTINGS_DEFAULTS = {
   login_lock_minutes: 15,
   eco_mode_enabled: true,
   eco_mode_threshold_mb: 512,
+  log_retention_days: 15,
   timezone: 'Asia/Shanghai',
   hostname: os.hostname()
 }
@@ -1209,6 +1230,19 @@ function listenOn(port) {
 }
 
 async function start() {
+  // 审计日志按保留天数清理：启动时执行一次，之后每 6 小时检查
+  try {
+    pruneOperationsLog(settings.log_retention_days)
+  } catch (e) {
+    console.error('[ArmGuard] 审计日志清理失败:', e.message)
+  }
+  const logPruneTimer = setInterval(() => {
+    try {
+      pruneOperationsLog(settings.log_retention_days)
+    } catch {}
+  }, 6 * 60 * 60 * 1000)
+  logPruneTimer.unref?.()
+
   try {
     const init = ensureInitialAdmin({ dataDir: DATA_DIR, usersFile: USERS_FILE })
     if (init.created) {

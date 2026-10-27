@@ -235,9 +235,9 @@ import { appStoreApi, AppMarketItem } from '@/api/appstore'
       </div>
 
       <!-- 5. Bottom Two-Column Layout: Top Processes & Quick App Launcher -->
-      <div class="m3-grid-2">
+      <div class="m3-grid-2 dash-bottom-grid">
         <!-- Top Processes -->
-        <div class="m3-card">
+        <div class="m3-card dash-bottom-card">
           <div class="section-header">
             <div class="section-title">
               <mat-icon style="color: var(--ag-primary)" aria-hidden="true">tune</mat-icon>
@@ -291,7 +291,7 @@ import { appStoreApi, AppMarketItem } from '@/api/appstore'
             (action)="system.fetchProcesses(procSort(), 15, false)"
           ></ag-state-banner>
 
-          <div class="m3-table-wrap font-mono" style="margin-top: 8px">
+          <div class="m3-table-wrap font-mono dash-scroll" style="margin-top: 8px">
             <table class="m3-data-table">
               <thead>
                 <tr>
@@ -357,7 +357,7 @@ import { appStoreApi, AppMarketItem } from '@/api/appstore'
         </div>
 
         <!-- Installed / Featured ARM Apps Quick Deck -->
-        <div class="m3-card">
+        <div class="m3-card dash-bottom-card">
           <div class="section-header">
             <div class="section-title">
               <mat-icon style="color: var(--ag-primary)" aria-hidden="true">apps</mat-icon>
@@ -377,7 +377,7 @@ import { appStoreApi, AppMarketItem } from '@/api/appstore'
             (action)="loadQuickApps()"
           ></ag-state-banner>
 
-          <div *ngIf="!appsError()" class="apps-mini-grid" style="margin-top: 12px">
+          <div *ngIf="!appsError()" class="apps-mini-grid dash-scroll" style="margin-top: 12px">
             <div
               *ngFor="let app of quickApps()"
               class="m3-tonal-card app-mini-tile"
@@ -630,10 +630,32 @@ import { appStoreApi, AppMarketItem } from '@/api/appstore'
         background: var(--ag-primary-container) !important;
         color: var(--ag-on-primary-container) !important;
       }
+      /* 底部两张卡片等高：高度差过大会显得留白突兀，统一固定高度 + 内部滚动 */
+      .dash-bottom-grid {
+        align-items: stretch;
+      }
+      .dash-bottom-card {
+        display: flex;
+        flex-direction: column;
+        height: 460px;
+        min-height: 0;
+      }
+      .dash-scroll {
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+      }
+      @media (max-width: 1024px) {
+        .dash-bottom-card {
+          height: auto;
+          max-height: 520px;
+        }
+      }
       .apps-mini-grid {
         display: grid;
         grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
         gap: 10px;
+        align-content: start;
       }
       .app-mini-tile {
         cursor: pointer;

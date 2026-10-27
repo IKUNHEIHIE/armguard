@@ -297,10 +297,14 @@ const SITE_DRAFT_KEY = 'armguard_site_draft_v1'
             >
               <option value="static">纯静态 / HTML / SPA 单页应用 (无需 PHP)</option>
               <option value="proxy">七层 HTTP / WebSocket / gRPC 反向代理</option>
-              <option *ngFor="let p of phpOptions()" [value]="p.value">
-                {{ p.label }} {{ p.installed ? '(已安装)' : '(未安装 - 需前往软件商店安装)' }}
-              </option>
+              <option *ngFor="let p of phpOptions()" [value]="p.value">{{ p.label }}</option>
             </select>
+            <div class="m3-hint" *ngIf="phpOptions().length === 0">
+              宿主机尚未安装任何 PHP 运行时。如需运行 PHP 站点，请先到软件商店安装对应版本。
+              <button type="button" mat-button color="primary" (click)="router.navigateByUrl('/appstore')">
+                前往软件商店安装 →
+              </button>
+            </div>
             <div
               *ngIf="isSelectedPhpMissing(createForm.php_version)"
               class="m3-field-error"
@@ -426,9 +430,7 @@ const SITE_DRAFT_KEY = 'armguard_site_draft_v1'
                     >
                       <option value="static">纯静态 (Static)</option>
                       <option value="proxy">反向代理 (Reverse Proxy)</option>
-                      <option *ngFor="let p of phpOptions()" [value]="p.value">
-                        {{ p.label }} {{ p.installed ? '(已安装)' : '(未安装)' }}
-                      </option>
+                      <option *ngFor="let p of phpOptionsForEdit()" [value]="p.value">{{ p.label }}</option>
                     </select>
                   </div>
                   <div class="m3-field">
@@ -626,18 +628,41 @@ export class SitesComponent implements OnInit, HasUnsavedChanges {
   rawNginxConf = ''
   siteLogs: string[] = []
 
+  private readonly allPhpOptions = [
+    { value: 'php84', ver: '8.4', label: 'PHP 8.4 (FastCGI Unix Socket)' },
+    { value: 'php83', ver: '8.3', label: 'PHP 8.3 (FastCGI Unix Socket)' },
+    { value: 'php82', ver: '8.2', label: 'PHP 8.2 (FastCGI Unix Socket)' },
+    { value: 'php81', ver: '8.1', label: 'PHP 8.1 (FastCGI Unix Socket)' },
+    { value: 'php74', ver: '7.4', label: 'PHP 7.4 (FastCGI Unix Socket)' },
+  ]
+
+  /** 下拉框只列宿主机已安装的 PHP 版本，未安装的不出现（避免选了之后站点跑不起来） */
   readonly phpOptions = computed(() => {
     const installed = this.installedPhpVersions()
-    const list = [
-      { value: 'php83', ver: '8.3', label: 'PHP 8.3 (FastCGI Unix Socket)' },
-      { value: 'php82', ver: '8.2', label: 'PHP 8.2 (FastCGI Unix Socket)' },
-      { value: 'php81', ver: '8.1', label: 'PHP 8.1 (FastCGI Unix Socket)' },
-      { value: 'php74', ver: '7.4', label: 'PHP 7.4 (FastCGI Unix Socket)' },
+    return this.allPhpOptions
+      .filter((item) => installed.includes(item.ver))
+      .map((item) => ({ ...item, installed: true }))
+  })
+
+  /**
+   * 编辑已有站点时用：如果站点当前用的 PHP 版本已经被卸载，
+   * 仍然要把它保留在下拉框里（否则 select 的当前值无处匹配，会显示成空白）。
+   */
+  readonly phpOptionsForEdit = computed(() => {
+    const base = this.phpOptions()
+    const current = this.activeSite()?.php_version
+    if (!current || current === 'static' || current === 'proxy') return base
+    if (base.some((p) => p.value === current)) return base
+    const known = this.allPhpOptions.find((p) => p.value === current)
+    return [
+      ...base,
+      {
+        value: current,
+        ver: known?.ver || current.replace(/^php/, ''),
+        label: (known?.label || current.toUpperCase()) + '（当前使用，但未安装）',
+        installed: false,
+      },
     ]
-    return list.map((item) => ({
-      ...item,
-      installed: installed.includes(item.ver),
-    }))
   })
 
   hasUnsavedChanges(): boolean {

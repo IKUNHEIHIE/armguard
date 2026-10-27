@@ -126,7 +126,7 @@ export const routes: Routes = [
       import('./pages/settings/settings.component').then((m) => m.SettingsComponent),
     canActivate: [authGuard],
     canDeactivate: [unsavedChangesGuard],
-    title: '面板核心设置 - ArmGuard',
+    title: '面板设置 - ArmGuard',
   },
   { path: '**', redirectTo: '' },
 ]

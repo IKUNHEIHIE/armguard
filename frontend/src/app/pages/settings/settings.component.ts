@@ -23,7 +23,7 @@ import { copyToClipboard } from '@/utils/clipboard'
         <div>
           <h2 class="m3-page-title">
             <mat-icon style="color: var(--ag-primary)">tune</mat-icon>
-            <span>面板核心设置与安全中心 (Panel Settings)</span>
+            <span>面板设置</span>
           </h2>
           <p class="m3-page-subtitle font-mono">
             端口与 HTTPS 证书绑定、管理员凭证更新、大模型 API 接入、Eco 节能推流与面板配置灾备 · 版本:
@@ -103,7 +103,7 @@ import { copyToClipboard } from '@/utils/clipboard'
         animationDuration="160ms"
       >
         <!-- Tab 0: Access & Security (FE-005) -->
-        <mat-tab label="面板安全与访问">
+        <mat-tab label="安全设置">
           <div class="m3-grid-2 font-mono" style="margin-top: 14px">
             <div class="m3-card" style="display: flex; flex-direction: column; gap: 14px">
               <div style="display: flex; justify-content: space-between; align-items: center">
@@ -189,10 +189,8 @@ import { copyToClipboard } from '@/utils/clipboard'
               {{ savingAccess() ? '保存中...' : '保存访问与安全设置' }}
             </button>
           </div>
-        </mat-tab>
 
-        <!-- Tab 1: Admin Credentials & AI LLM (FE-005, FE-018) -->
-        <mat-tab label="管理员凭证与 AI 引擎">
+          <!-- 管理员凭证与 AI 引擎（已合并进安全设置） -->
           <div class="m3-grid-2 font-mono" style="margin-top: 14px">
             <!-- Admin Credentials -->
             <div class="m3-card" style="display: flex; flex-direction: column; gap: 14px">
@@ -337,7 +335,7 @@ import { copyToClipboard } from '@/utils/clipboard'
         </mat-tab>
 
         <!-- Tab 2: Brand & Eco Mode (FE-005) -->
-        <mat-tab label="品牌定制与 Eco 节能">
+        <mat-tab label="基础设置">
           <div class="m3-grid-2 font-mono" style="margin-top: 14px">
             <div class="m3-card" style="display: flex; flex-direction: column; gap: 14px">
               <div style="display: flex; justify-content: space-between; align-items: center">
@@ -381,6 +379,30 @@ import { copyToClipboard } from '@/utils/clipboard'
             </div>
           </div>
 
+          <div class="m3-card font-mono" style="margin-top: 14px; display: flex; flex-direction: column; gap: 14px">
+            <div style="display: flex; justify-content: space-between; align-items: center">
+              <div>
+                <strong>面板日志定时清理</strong>
+                <div style="font-size: 0.72rem; color: var(--ag-on-surface-variant)">
+                  按保留天数自动清理审计与操作日志（operations.json），启动时与每 6 小时执行一次
+                </div>
+              </div>
+            </div>
+            <div class="m3-field">
+              <label for="settings-log-retention">日志保留天数 (1 - 365，默认 15 天)</label>
+              <input
+                id="settings-log-retention"
+                type="number"
+                min="1"
+                max="365"
+                [(ngModel)]="settings.log_retention_days"
+              />
+              <div class="m3-hint">
+                超过该天数的日志会在下次清理时被删除；审计日志最多保留最近 500 条。
+              </div>
+            </div>
+          </div>
+
           <div style="margin-top: 14px; display: flex; justify-content: flex-end; gap: 10px">
             <button
               mat-flat-button
@@ -388,7 +410,7 @@ import { copyToClipboard } from '@/utils/clipboard'
               [disabled]="savingBrand() || !isBrandDirty()"
               (click)="saveBrandSettings()"
             >
-              {{ savingBrand() ? '保存中...' : '保存品牌与节能设置' }}
+              {{ savingBrand() ? '保存中...' : '保存基础设置' }}
             </button>
           </div>
         </mat-tab>

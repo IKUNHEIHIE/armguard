@@ -63,6 +63,11 @@ function validatePanelSettings(body, ctx) {
     if (!(v >= 128 && v <= 65536)) errors.push('节能模式内存阈值必须在 128-65536 MB 之间')
     else out.eco_mode_threshold_mb = v
   }
+  if (has('log_retention_days')) {
+    const v = toInt(body.log_retention_days)
+    if (!(v >= 1 && v <= 365)) errors.push('面板日志保留天数必须在 1-365 天之间')
+    else out.log_retention_days = v
+  }
   if (has('panel_ssl_cert')) out.panel_ssl_cert = String(body.panel_ssl_cert || '').trim()
   if (has('panel_ssl_key')) out.panel_ssl_key = String(body.panel_ssl_key || '').trim()
   if (has('ssl_enabled')) out.ssl_enabled = Boolean(body.ssl_enabled)
