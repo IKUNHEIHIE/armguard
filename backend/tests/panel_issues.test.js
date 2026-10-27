@@ -790,6 +790,9 @@ test('TOOLBOX: DNS/hosts/mirrors 校验、备份与路径白名单（不触碰�
     const dnsGet = await call('/api/v1/toolbox/dns', 'GET');
     assert.equal(dnsGet.resp.code, 0);
     assert.deepEqual(dnsGet.resp.data.servers, ['192.168.1.1', 'fe80::1%wlan0']);
+    // 必须同时暴露「正在使用」的 DNS 与它的来源，否则 DHCP 场景下界面会显示为空
+    assert.deepEqual(dnsGet.resp.data.effective, ['192.168.1.1', 'fe80::1%wlan0']);
+    assert.equal(dnsGet.resp.data.effective_source, 'file');
 
     // --- PUT DNS：非法地址必须 400 且不写文件 ---
     const before = fs.readFileSync(resolv, 'utf8');

@@ -4,6 +4,7 @@ export interface DnsState {
   mode: 'networkmanager' | 'systemd-resolved' | 'resolv.conf'
   servers: string[]
   effective: string[]
+  effective_source: 'dhcp' | 'manual' | 'file'
   auto_dns: boolean | null
   connection?: string | null
   file: string

@@ -247,40 +247,73 @@ async function readNmDns() {
   }
 }
 
+/** 读取 systemd-resolved 的实际上游 DNS（resolvectl dns 输出按链路分组） */
+async function readResolvedUpstream() {
+  const r = await execFileAsync('resolvectl', ['dns'], { timeout: 5000 })
+  if (r.error || r.status !== 0) return []
+  const servers = []
+  for (const line of String(r.stdout || '').split('\n')) {
+    // 形如：Global: 223.5.5.5 119.29.29.29
+    //      Link 2 (wlan0): 192.168.1.1
+    const idx = line.indexOf(':')
+    if (idx === -1) continue
+    for (const tok of line.slice(idx + 1).trim().split(/\s+/)) {
+      if (isValidIp(tok) && !servers.includes(tok)) servers.push(tok)
+    }
+  }
+  return servers
+}
+
 async function readDns(ctx) {
   const p = paths(ctx)
   const mode = await detectDnsMode(p)
+
   if (mode === 'networkmanager') {
     const nm = await readNmDns()
+    const effective = parseResolvConf(readText(p.RESOLV_CONF))
+    // 没有手动配置时，DNS 是 DHCP 下发的：此时「配置值」为空，但「正在使用」有值，
+    // 必须把两者分开表达，否则界面会出现「当前 DNS 是空的」这种误导。
+    const configured = nm.servers || []
+    const source = configured.length > 0 ? 'manual' : 'dhcp'
     return {
       mode,
       connection: nm.connection,
-      servers: nm.servers,
+      servers: configured,
+      effective,
+      effective_source: source,
       auto_dns: nm.auto,
       file: p.RESOLV_CONF,
-      effective: parseResolvConf(readText(p.RESOLV_CONF)),
-      hint: '当前由 NetworkManager 托管，DNS 通过连接配置下发；直接改 /etc/resolv.conf 会在重连后失效。'
+      hint:
+        source === 'dhcp'
+          ? '当前 DNS 由 DHCP 自动下发（未手动指定）。保存后将改为手动固定，不再跟随路由器。'
+          : '当前 DNS 为手动指定。直接改 /etc/resolv.conf 会在重连后失效，因此通过 nmcli 写入连接配置。'
     }
   }
+
   if (mode === 'systemd-resolved') {
     const dropin = readText(path.join(p.RESOLVED_DROPIN_DIR, '90-armguard-dns.conf'))
     const fromDropin = parseResolvConf(dropin.replace(/DNS=/g, 'nameserver '))
-    const effective = parseResolvConf(readText(p.RESOLV_CONF))
+    const upstream = await readResolvedUpstream()
+    const effective = upstream.length ? upstream : parseResolvConf(readText(p.RESOLV_CONF))
     return {
       mode,
-      servers: fromDropin.length ? fromDropin : effective,
+      servers: fromDropin,
+      effective,
+      effective_source: fromDropin.length ? 'manual' : 'dhcp',
       auto_dns: false,
       file: path.join(p.RESOLVED_DROPIN_DIR, '90-armguard-dns.conf'),
-      effective,
       hint: '当前由 systemd-resolved 托管，将通过 resolved.conf.d 下的 drop-in 配置生效。'
     }
   }
+
+  const fileServers = parseResolvConf(readText(p.RESOLV_CONF))
   return {
     mode,
-    servers: parseResolvConf(readText(p.RESOLV_CONF)),
+    servers: fileServers,
+    effective: fileServers,
+    effective_source: 'file',
     auto_dns: null,
     file: p.RESOLV_CONF,
-    effective: parseResolvConf(readText(p.RESOLV_CONF)),
     hint: '直接写入 /etc/resolv.conf；若系统由 DHCP 客户端托管，重启后可能被覆盖。'
   }
 }

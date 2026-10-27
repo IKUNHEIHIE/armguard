@@ -57,6 +57,29 @@ import {
                 <h3>DNS 解析服务器</h3>
                 <span class="m3-badge">{{ dnsModeLabel() }}</span>
               </div>
+
+              <!-- 当前实际生效的 DNS（与可编辑的「配置值」区分开） -->
+              <div class="toolbox-now">
+                <div class="toolbox-now-head">
+                  <span class="toolbox-stat-label">当前正在使用</span>
+                  <span
+                    class="m3-badge"
+                    [class.toolbox-badge-on]="dns()?.effective_source === 'manual'"
+                  >
+                    {{ dnsSourceLabel() }}
+                  </span>
+                  <span class="m3-hint" *ngIf="dns()?.connection">
+                    连接：<span class="font-mono">{{ dns()?.connection }}</span>
+                  </span>
+                </div>
+                <div class="toolbox-now-chips" *ngIf="(dns()?.effective || []).length; else noDns">
+                  <span class="toolbox-dns-chip font-mono" *ngFor="let s of dns()?.effective">{{ s }}</span>
+                </div>
+                <ng-template #noDns>
+                  <span class="m3-hint">未读取到生效中的 DNS</span>
+                </ng-template>
+              </div>
+
               <p class="m3-hint">{{ dns()?.hint }}</p>
 
               <div class="m3-grid-3">
@@ -79,7 +102,7 @@ import {
                 <button mat-stroked-button type="button" (click)="fillDns(['223.5.5.5', '119.29.29.29'])">阿里 DNS</button>
                 <button mat-stroked-button type="button" (click)="fillDns(['119.29.29.29', '223.5.5.5'])">腾讯 DNS</button>
                 <button mat-stroked-button type="button" (click)="fillDns(['1.1.1.1', '8.8.8.8'])">Cloudflare</button>
-                <button mat-stroked-button type="button" (click)="fillDns(['192.168.1.1'])">沿用路由器</button>
+                <button mat-stroked-button type="button" (click)="fillDns(dns()?.effective || [])">填入当前生效值</button>
               </div>
 
               <div class="m3-field-error" *ngIf="dnsError()">{{ dnsError() }}</div>
@@ -89,7 +112,7 @@ import {
                   <mat-icon>save</mat-icon>
                   <span>{{ dnsSaving() ? '正在应用...' : '保存 DNS 配置' }}</span>
                 </button>
-                <span class="m3-hint">当前生效：{{ (dns()?.effective || []).join(', ') || '未知' }}</span>
+                <span class="m3-hint" *ngIf="dnsDirty()">有未保存的修改</span>
               </div>
             </div>
           </div>
@@ -429,6 +452,36 @@ import {
         border-radius: 12px;
         background: color-mix(in srgb, var(--ag-primary) 6%, transparent);
       }
+      .toolbox-now {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        padding: 14px;
+        margin: 4px 0 12px;
+        border-radius: 14px;
+        border: 1px solid var(--ag-border, rgba(0, 0, 0, 0.12));
+        background: color-mix(in srgb, var(--ag-primary) 5%, transparent);
+      }
+      .toolbox-now-head {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+      .toolbox-now-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .toolbox-dns-chip {
+        display: inline-flex;
+        align-items: center;
+        padding: 4px 12px;
+        border-radius: 999px;
+        font-size: 13px;
+        background: color-mix(in srgb, var(--ag-primary) 14%, transparent);
+        color: var(--ag-primary);
+      }
       .toolbox-stat-label {
         font-size: 12px;
         opacity: 0.7;
@@ -489,6 +542,7 @@ export class ToolboxComponent implements OnInit, HasUnsavedChanges {
   readonly dnsSaving = signal(false)
   readonly dnsError = signal<string | null>(null)
   dnsInputs: string[] = ['', '', '']
+  private dnsBaseline = ''
 
   // ---- SWAP ----
   readonly swap = signal<SwapState | null>(null)
@@ -568,6 +622,18 @@ export class ToolboxComponent implements OnInit, HasUnsavedChanges {
     return '未知'
   }
 
+  dnsSourceLabel(): string {
+    const src = this.dns()?.effective_source
+    if (src === 'manual') return '手动配置'
+    if (src === 'dhcp') return 'DHCP 自动下发'
+    if (src === 'file') return '来自配置文件'
+    return '来源未知'
+  }
+
+  dnsDirty(): boolean {
+    return this.dnsInputs.map(s => (s || '').trim()).filter(Boolean).join(',') !== this.dnsBaseline
+  }
+
   reloadAll() {
     this.bootError.set(null)
     this.loadDns()
@@ -590,8 +656,13 @@ export class ToolboxComponent implements OnInit, HasUnsavedChanges {
     try {
       const res = await toolboxApi.getDns()
       this.dns.set(res.data.data)
-      const servers = res.data?.data?.servers || []
-      this.dnsInputs = [servers[0] || '', servers[1] || '', servers[2] || '']
+      const configured = res.data?.data?.servers || []
+      const effective = res.data?.data?.effective || []
+      // DHCP 下发时「配置值」为空，若直接留空，界面看起来像「没有任何 DNS」。
+      // 这里用实际生效值回填，用户能看到当前真实状态，保存时再固化为手动配置。
+      const shown = configured.length ? configured : effective
+      this.dnsInputs = [shown[0] || '', shown[1] || '', shown[2] || '']
+      this.dnsBaseline = this.dnsInputs.map(s => (s || '').trim()).filter(Boolean).join(',')
     } catch (e: any) {
       this.dnsError.set(this.fail('读取 DNS', e))
     } finally {
