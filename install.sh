@@ -30,6 +30,7 @@ GITHUB_MIRRORS=("" "https://ghfast.top/")
 ACTION="install"
 ASSUME_YES=0
 NO_START=0
+FORCE_UNIT=0
 
 # ---------------------------------------------------------------------------
 # 输出辅助
@@ -61,6 +62,7 @@ ArmGuard 一键安装脚本
   --port <端口>      面板监听端口（默认 8888）
   --entrance <路径>  安全入口路径（默认 /armguard）
   --no-start         安装完成后不自动启动服务
+  --force-unit       即使已存在 systemd 服务定义也强制重写（默认升级时保留）
   -y, --yes          非交互模式，自动确认
   -h, --help         显示本帮助
 
@@ -87,6 +89,7 @@ while [ $# -gt 0 ]; do
     --port) PORT="${2:-}"; shift 2 ;;
     --entrance) ENTRANCE="${2:-}"; shift 2 ;;
     --no-start) NO_START=1; shift ;;
+    --force-unit) FORCE_UNIT=1; shift ;;
     -y|--yes) ASSUME_YES=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) die "未知参数: $1（使用 --help 查看用法）" ;;
@@ -287,6 +290,13 @@ resolve_latest_version() {
 # systemd 服务
 # ---------------------------------------------------------------------------
 write_service() {
+  # 升级时默认保留用户已有的服务定义：里面可能有自定义内存上限、环境变量等，
+  # 直接覆盖会悄悄改变运行行为。需要重写时显式加 --force-unit。
+  if [ -f "/etc/systemd/system/${SERVICE_NAME}.service" ] && [ "$FORCE_UNIT" != "1" ]; then
+    info "检测到已有 systemd 服务定义，保留现有配置（如需重写请加 --force-unit）"
+    systemctl daemon-reload
+    return 0
+  fi
   cat > "/etc/systemd/system/${SERVICE_NAME}.service" <<EOF
 [Unit]
 Description=ArmGuard management panel for ARM Linux
