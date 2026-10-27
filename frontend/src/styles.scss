@@ -572,18 +572,29 @@ table.m3-data-table {
   font-size: 0.85rem;
 }
 
+/* 自托管图标字体（Material Symbols Outlined 子集，仅含本项目用到的图标）。
+   不再从 fonts.googleapis.com 拉取：运维面板常在离线/受限网络下使用，
+   外部字体一旦加载失败，deployed_code / database 这类新图标名就会显示为空白。 */
+@font-face {
+  font-family: 'Material Symbols Outlined';
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url('/fonts/material-symbols-outlined.woff') format('woff');
+}
+
 /* Offline Icon Ligature Overflow Safeguard (FE-017) */
 mat-icon {
   overflow: hidden;
   text-overflow: clip;
   white-space: nowrap;
   flex-shrink: 0;
-  /* Material Symbols（MD3 图标集）优先，Material Icons 作为后备。
-     旧字体缺少 deployed_code / database 等图标名，会渲染成空白。 */
+  /* Material Symbols（MD3 图标集）优先，Material Icons 作为后备。 */
   font-family: 'Material Symbols Outlined', 'Material Icons', 'Material Icons Outlined';
   font-weight: normal;
   font-style: normal;
   font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  font-feature-settings: 'liga';
   letter-spacing: normal;
   text-transform: none;
   -webkit-font-feature-settings: 'liga';

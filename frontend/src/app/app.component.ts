@@ -71,27 +71,34 @@ interface NavGroup {
                 (click)="toggleGroup(grp.group)"
               >
                 <span class="group-label-text">{{ grp.group }}</span>
-                <mat-icon class="group-chevron" aria-hidden="true">
-                  {{ isGroupCollapsed(grp.group) ? 'expand_more' : 'expand_less' }}
+                <mat-icon
+                  class="group-chevron"
+                  [class.group-chevron-expanded]="!isGroupCollapsed(grp.group)"
+                  aria-hidden="true"
+                >
+                  expand_more
                 </mat-icon>
               </button>
               <div
                 class="group-items"
+                [class.group-items-collapsed]="isGroupCollapsed(grp.group)"
                 [id]="'nav-group-' + grp.group"
-                *ngIf="!isGroupCollapsed(grp.group)"
+                [attr.inert]="isGroupCollapsed(grp.group) ? '' : null"
               >
-                <a
-                  *ngFor="let item of grp.items"
-                  [routerLink]="item.path"
-                  routerLinkActive="active-pill"
-                  [routerLinkActiveOptions]="{ exact: item.path === '/' }"
-                  class="m3-nav-item"
-                  (click)="isMobile() && mobileDrawerOpen.set(false)"
-                >
-                  <mat-icon class="nav-icon" aria-hidden="true">{{ item.icon }}</mat-icon>
-                  <span class="nav-label">{{ item.label }}</span>
-                  <span *ngIf="item.badge" class="nav-badge font-mono">{{ item.badge }}</span>
-                </a>
+                <div class="group-items-inner">
+                  <a
+                    *ngFor="let item of grp.items"
+                    [routerLink]="item.path"
+                    routerLinkActive="active-pill"
+                    [routerLinkActiveOptions]="{ exact: item.path === '/' }"
+                    class="m3-nav-item"
+                    (click)="isMobile() && mobileDrawerOpen.set(false)"
+                  >
+                    <mat-icon class="nav-icon" aria-hidden="true">{{ item.icon }}</mat-icon>
+                    <span class="nav-label">{{ item.label }}</span>
+                    <span *ngIf="item.badge" class="nav-badge font-mono">{{ item.badge }}</span>
+                  </a>
+                </div>
               </div>
             </div>
           </nav>
@@ -334,8 +341,35 @@ interface NavGroup {
         opacity: 0.75;
       }
       .group-items {
+        display: grid;
+        grid-template-rows: 1fr;
+        transition:
+          grid-template-rows 260ms cubic-bezier(0.4, 0, 0.2, 1),
+          opacity 200ms ease;
+        opacity: 1;
+      }
+      .group-items-collapsed {
+        grid-template-rows: 0fr;
+        opacity: 0;
+      }
+      .group-items-inner {
+        overflow: hidden;
         display: flex;
         flex-direction: column;
+        min-height: 0;
+      }
+      .group-chevron {
+        transition: transform 260ms cubic-bezier(0.4, 0, 0.2, 1);
+      }
+      .group-chevron-expanded {
+        transform: rotate(180deg);
+      }
+      /* 尊重系统的「减少动态效果」偏好 */
+      @media (prefers-reduced-motion: reduce) {
+        .group-items,
+        .group-chevron {
+          transition: none;
+        }
       }
       .m3-nav-item {
         display: flex;

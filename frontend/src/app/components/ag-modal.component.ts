@@ -134,6 +134,12 @@ export class AgModalComponent implements OnChanges, OnDestroy {
   @Input() showFooter = true
 
   @Output() close = new EventEmitter<void>()
+  /**
+   * 兼容别名：早期只有 close，但多个页面模板写的是 (closed)。
+   * Angular 对组件上的未知事件名不报错，只会当成宿主元素的原生事件监听，
+   * 于是「点 ✕ / 按 ESC / 点遮罩」都静默失效，弹窗关不掉。这里两个都发。
+   */
+  @Output() closed = new EventEmitter<void>()
 
   readonly titleId = `ag-modal-title-${++modalSeq}`
   readonly confirmingDiscard = signal(false)
@@ -183,6 +189,7 @@ export class AgModalComponent implements OnChanges, OnDestroy {
   forceClose() {
     this.confirmingDiscard.set(false)
     this.close.emit()
+    this.closed.emit()
   }
 
   private restoreFocus() {

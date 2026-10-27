@@ -13,14 +13,10 @@
       rel="stylesheet"
     />
     <!--
-      Material Symbols 是 Material Design 3 对应的图标集，也是旧 Material Icons 的超集。
-      旧字体没有 deployed_code / database / folder_zip 等较新的图标名，会导致图标显示为空白或文字。
-      保留 Material Icons 作为后备：若 Symbols 字体加载失败，常见图标仍能正常显示。
+      图标字体：Material Symbols 已自托管在 /fonts/ 下（见 styles.scss 的 @font-face），
+      不再依赖 fonts.googleapis.com —— 运维面板在离线/受限网络下也必须能显示图标。
+      旧 Material Icons 保留为后备（部分老图标名只在旧字体里）。
     -->
-    <link
-      href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200"
-      rel="stylesheet"
-    />
     <link
       href="https://fonts.googleapis.com/icon?family=Material+Icons|Material+Icons+Outlined"
       rel="stylesheet"
