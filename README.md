@@ -3,7 +3,8 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Architecture-ARM64%20%7C%20ARMv7%20%7C%20x86__64-00D084?style=for-the-badge&logo=arm" alt="ARM Native" />
   <img src="https://img.shields.io/badge/Memory%20Footprint-%3C%2050MB-10B981?style=for-the-badge" alt="Memory Footprint" />
-  <img src="https://img.shields.io/badge/Frontend-Angular%2019%20%2B%20Material%20Design%203-DD0031?style=for-the-badge&logo=angular" alt="Angular Material M3" />
+  <img src="https://img.shields.io/badge/Frontend-Angular%2021%20%2B%20Material%20Design%203-DD0031?style=for-the-badge&logo=angular" alt="Angular Material M3" />
+  <img src="https://img.shields.io/github/v/release/IKUNHEIHIE/armguard?style=for-the-badge&color=blue" alt="Release" />
   <img src="https://img.shields.io/badge/Backend-Node.js%20%2B%20Linux%20Native-00ADD8?style=for-the-badge&logo=nodedotjs" alt="Node.js" />
   <img src="https://img.shields.io/badge/Network-IPv4%20%2B%20IPv6%20Dual--Stack-6366F1?style=for-the-badge" alt="Dual Stack" />
   <img src="https://img.shields.io/badge/License-MIT-blue?style=for-the-badge" alt="License" />
@@ -101,30 +102,79 @@
 ### 3.10 Web 终端 (Web Terminal)
 - 基于 `@xterm/xterm` 的内嵌式 Web SSH 终端，支持 ANSI 全彩色高亮、自适应窗口缩放与快捷命令交互。
 
+### 3.11 系统工具箱 (Toolbox)
+把运维中最常改、最容易改错的几项系统配置收进一个页面，每处改动都自动备份并记审计日志：
+- **DNS 设置**：自动识别 NetworkManager / systemd-resolved / 裸 `resolv.conf` 三种托管方式并走对应通道，
+  同时展示「配置值」与「实际生效值」，避免改完不知道有没有生效；
+- **虚拟内存**：`fallocate`（不支持则回退 `dd`）→ `mkswap` → `swapon`，自动写入 `/etc/fstab` 持久化，
+  支持关闭删除与 `swappiness` 调整；
+- **时区设置**：`timedatectl` 切换，带搜索过滤（400+ 时区）；
+- **hosts 设置**：逐行校验「IP + 主机名」格式，保存即生效；
+- **镜像源设置**：内置 Debian 官方 / 华为云 / 阿里云 / 清华大学源，支持自定义主仓库与安全源，
+  自动识别单行与 deb822 两种格式，并可一键 `apt-get update`。
+
+### 3.12 软件商店与多版本运行时
+- **真实版本可选**：安装前用 `apt-cache madison` 查询当前源中**真实可安装**的版本，
+  由用户挑选（含来源仓库与「已装」标记），而不是写死几个版本号；
+- **PHP 多版本运行池**：PHP 7.4 / 8.1 / 8.2 / 8.3 / 8.4 共存，一键切换 CLI 默认版本；
+- **Node.js 版本管理器**（类似 nvm）：任意版本安装到 `/opt/nodejs/<version>`，
+  通过 `/usr/local/bin` 软链切换命令行默认版本，**不影响面板自身运行时**；
+  下载优先走 npmmirror，按 CPU 架构自动选包；
+- **卸载即后台任务**：安装与卸载都进入右上角「任务中心」，跨页面持续追踪进度与日志，
+  卸载使用 `apt-get remove --autoremove`，并复核系统真实状态，避免「卸载成功但还装着」。
+
 ---
 
 ## 🚀 4. 快速安装与部署
 
-### 方式一：独立部署包一键安装（推荐生产环境）
+### 方式一：一键安装脚本（推荐）
 
-适用于 Ubuntu 20.04+、Debian 11+、openEuler、Raspberry Pi OS 等 ARM64/ARMv7 平台。
+适用于 Debian 12+ / Ubuntu 22.04+ / Armbian / Raspberry Pi OS 等 systemd 发行版，
+支持 `aarch64` / `armv7l` / `x86_64` 三种架构。**脚本会自动准备 Node.js 运行时**，
+不需要事先安装任何依赖。
 
 ```bash
-# 1. 下载或解压发行包
-tar -zxvf armguard-panel-v0.1.0.tar.gz
-cd armguard
-
-# 2. 执行一键安装脚本（自动配置 systemd 服务与 cgroup 内存限制）
+curl -fsSLO https://raw.githubusercontent.com/IKUNHEIHIE/armguard/main/install.sh
 sudo bash install.sh
 ```
 
-安装脚本会自动：
-1. 校验宿主机架构（`aarch64` / `armv7l` / `x86_64`）与 Node.js（`>= 20`）运行时；
-2. 部署面板后端、前端构建产物（`dist/`）与依赖包（`node_modules/`）至 `/opt/armguard`；
-3. 创建权限受限的持久化数据目录 `/var/lib/armguard`（`0700`）与备份目录 `/var/lib/armguard/backups`（升级时完整保留既有配置与管理员凭证）；
-4. 注册、启动并执行 `armguard.service` HTTP/HTTPS 本地健康检查。
+安装完成后会直接打印访问地址与初始管理员密码。
 
-### 方式二：源码编译与本地开发
+**常用参数**
+
+| 命令 | 说明 |
+| :--- | :--- |
+| `sudo bash install.sh` | 默认安装（端口 `8888`，安全入口 `/armguard`） |
+| `sudo bash install.sh --port 21000` | 指定监听端口 |
+| `sudo bash install.sh --entrance /mysecret` | 指定安全入口路径 |
+| `sudo bash install.sh --upgrade` | 升级已有安装（先自动备份，数据目录保留） |
+| `sudo bash install.sh --uninstall` | 卸载程序与服务（保留 `/var/lib/armguard` 数据） |
+| `sudo bash install.sh --uninstall --purge` | 连同数据一并删除 |
+| `sudo bash install.sh --help` | 查看全部选项 |
+
+**脚本做了哪些事**
+
+1. 校验架构与 systemd 环境，识别发行版；
+2. 检测 Node.js，低于 v20 时依次尝试 `apt` → 官方二进制包（国内走 npmmirror 镜像）；
+3. 从 GitHub Releases 下载对应架构无关的发行包（纯 JS 产物，架构无关），国内网络自动回退加速镜像；
+4. 解压至 `/opt/armguard`，补齐运行期依赖 `ws`；
+5. 创建 `0700` 数据目录 `/var/lib/armguard` 与备份目录 `/var/backups/armguard`；
+6. 注册 `armguard.service`（含 cgroup 内存上限 `MemoryHigh=256M` / `MemoryMax=512M`），
+   开机自启并立即启动，最后打印访问地址与初始密码。
+
+> 升级时会把旧版本完整打包到 `/var/backups/armguard/upgrades/<时间戳>/`，
+> 数据目录与管理员凭证不会被动到。
+
+### 方式二：使用发行包手动安装
+
+```bash
+# 从 https://github.com/IKUNHEIHIE/armguard/releases 下载对应版本
+tar -zxvf armguard-panel-v0.2.0.tar.gz
+cd armguard-panel
+sudo bash install.sh
+```
+
+### 方式三：源码编译与本地开发
 
 ```bash
 # 1. 克隆代码仓库
@@ -165,6 +215,7 @@ npm start
 
 ```text
 armguard/
+├── install.sh                # 一键安装脚本（自动装 Node.js + 注册 systemd 服务）
 ├── backend/                  # 后端服务与核心引擎
 │   ├── routes/               # 业务模块 API 路由
 │   │   ├── apps.js           # 软件商店与服务状态管理
@@ -179,10 +230,11 @@ armguard/
 │   │   ├── ssl.js            # Certbot ACME 真实证书引擎与 OpenSSL 解析
 │   │   ├── stream.js         # 四层 (Layer 4 Stream) TCP/UDP 端口转发
 │   │   ├── system.js         # ARM 硬件传感器、温度、电压与进程追踪
+│   │   ├── toolbox.js        # 系统工具箱（DNS / SWAP / 时区 / hosts / 镜像源）
 │   │   └── warp.js           # Cloudflare WARP 客户端集成与出站路由
 │   ├── templates/            # Nginx 虚拟主机与配置模板
 │   ├── scripts/              # 自动化安装、构建与端到端测试套件
-│   │   ├── install.sh        # 生产环境一键部署与 systemd 服务安装
+│   │   ├── package_release.mjs # 生成发行包（release/*.tar.gz + sha256）
 │   │   ├── package_release.py# 独立无依赖分发包打包脚本
 │   │   └── test_env.py       # 自动化测试环境配置加载器
 │   └── dev_server.js         # 高性能轻量级 Node.js 核心运行时
@@ -229,3 +281,17 @@ python backend/scripts/test_real_acme_ssl.py
 ## 📄 9. 开源协议
 
 本项目采用 [MIT License](LICENSE) 开源协议，欢迎自由使用、修改与分发。
+## 📝 10. 版本历史
+
+### v0.2.0（首个正式发行版）
+- **一键安装脚本**：`install.sh` 自动准备 Node.js、下载发行包、注册 systemd 服务，
+  支持 `--upgrade` / `--uninstall` / 自定义端口与安全入口
+- 新增「系统工具箱」：DNS / 虚拟内存 / 时区 / hosts / 镜像源
+- 软件商店支持按 apt 真实版本选择安装；卸载改为后台任务，可在任务中心追踪
+- Node.js 由「单一 APT 包」升级为**多版本管理器**，支持任意版本共存与 CLI 切换
+- 修复长耗时外部命令阻塞事件循环导致的整站卡顿（docker pull / apt / 备份 / 证书签发）
+- 修复应用卸载只删元包、实际未卸载的问题（改用 `--autoremove` 并复核真实状态）
+- 图标改为自托管 Material Symbols 子集，不再依赖 Google Fonts，离线可用
+- 前端全面升级 Angular 21 + Material Design 3，侧边栏分组可折叠
+- 服务支持优雅退出（SIGTERM 时关闭连接、通知前端重连），重启耗时从数十秒降至 <1s
+
