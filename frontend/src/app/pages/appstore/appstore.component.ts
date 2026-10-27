@@ -164,7 +164,7 @@ import { appStoreApi, AppMarketItem, AppManagementData, InstallablePackage, Node
                 {{ isInstallingApp(app.key) ? '正在后台安装...' : '一键安装 (APT)' }}
               </button>
               <button
-                *ngIf="app.status !== 'installed'"
+                *ngIf="app.status !== 'installed' && app.key !== 'nodejs'"
                 mat-stroked-button
                 [disabled]="isInstallingApp(app.key) || taskCenter.hasActiveAptTask()"
                 (click)="openVersionPicker(app)"

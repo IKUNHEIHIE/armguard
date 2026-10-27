@@ -718,7 +718,8 @@ export async function handleApps(pathname, req, res, url, ctx) {
   // 之前「安装 MySQL / MariaDB」只能装发行版默认版本，界面上写的 10.11 之类
   // 只是目录里的预设文案，和实际能装的版本无关。现在改为向 apt 查询后再让用户选。
   const versionsMatch = pathname.match(/^\/api\/v1\/apps\/([a-zA-Z0-9_-]+)\/versions$/)
-  if (versionsMatch && req.method === 'GET') {
+  // nodejs 走自己的版本管理器（/apps/nodejs/versions 返回已装/可装版本），不查 apt
+  if (versionsMatch && req.method === 'GET' && versionsMatch[1] !== 'nodejs') {
     const appKey = versionsMatch[1]
     const target = marketApps.find(a => a.key === appKey)
     if (!target) {
