@@ -874,3 +874,59 @@ test('TOOLBOX: DNS/hosts/mirrors 校验、备份与路径白名单（不触碰�
     fs.rmSync(work, { recursive: true, force: true });
   }
 });
+
+test('AG-PKG-01: 安装版本查询与候选包/版本号白名单校验', async () => {
+  const { handleApps } = await import('../routes/apps.js');
+
+  const ctx = {
+    parseBody: async () => ({}),
+    currentUser: () => 'opsadmin',
+    logOperation: () => {},
+  };
+
+  async function call(route, method, body) {
+    let resp = null;
+    const u = new URL('http://127.0.0.1' + route);
+    const handled = await handleApps(
+      u.pathname,
+      { method, headers: {} },
+      { json: (data = null, message = 'ok', code = 0) => { resp = { code, message, data }; } },
+      u,
+      { ...ctx, parseBody: async () => body }
+    );
+    return { handled, resp };
+  }
+
+  // 1. 查询版本：mysql 有两个候选包（MariaDB / MySQL），即使本机没有 apt 也应返回结构
+  const v = await call('/api/v1/apps/mysql/versions', 'GET');
+  assert.equal(v.resp.code, 0, v.resp.message);
+  assert.deepEqual(
+    v.resp.data.packages.map((p) => p.pkg),
+    ['mariadb-server', 'mysql-server'],
+    'MySQL 应用应同时查询 MariaDB 与 MySQL 两个候选包'
+  );
+  assert.ok(Array.isArray(v.resp.data.packages[0].versions));
+
+  // 2. 普通应用只有一个候选包
+  const r = await call('/api/v1/apps/redis/versions', 'GET');
+  assert.equal(r.resp.code, 0);
+  assert.deepEqual(r.resp.data.packages.map((p) => p.pkg), ['redis-server']);
+
+  // 3. 未知应用返回 404
+  const unknown = await call('/api/v1/apps/not-an-app/versions', 'GET');
+  assert.equal(unknown.resp.code, 404);
+
+  // 4. 安装时指定不在白名单里的包名必须被拒绝（不能把任意包名塞给 apt）
+  const badPkg = await call('/api/v1/apps/redis/install', 'POST', { pkg: 'openssh-server', version: '1:9.2' });
+  assert.equal(badPkg.resp.code, 400);
+  assert.match(badPkg.resp.message, /不支持安装软件包/);
+
+  // 5. 版本号含非法字符必须被拒绝（防参数注入）
+  const badVer = await call('/api/v1/apps/redis/install', 'POST', { pkg: 'redis-server', version: '7.0;rm -rf /' });
+  assert.equal(badVer.resp.code, 400);
+  assert.match(badVer.resp.message, /版本号格式非法/);
+
+  // 6. 非 apps 路径放行
+  const other = await call('/api/v1/system/info', 'GET');
+  assert.equal(other.handled, false);
+});

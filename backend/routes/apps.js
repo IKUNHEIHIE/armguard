@@ -375,6 +375,105 @@ export function getMarketAppsWithStatus(force = false) {
   return result
 }
 
+// 同一功能位可能由不同发行包提供（例如 MariaDB 与 MySQL 都叫“数据库”）
+const APP_PKG_CANDIDATES = {
+  mysql: [
+    { pkg: 'mariadb-server', label: 'MariaDB Server' },
+    { pkg: 'mysql-server', label: 'MySQL Server' }
+  ]
+}
+
+function packageCandidates(appKey, target) {
+  if (APP_PKG_CANDIDATES[appKey]) return APP_PKG_CANDIDATES[appKey]
+  return target?.pkg ? [{ pkg: target.pkg, label: target.name }] : []
+}
+
+/** apt-cache madison 列出某软件包在所有已启用源中的可安装版本 */
+async function aptMadison(pkg) {
+  const r = await execFileAsync('apt-cache', ['madison', pkg], { timeout: 20000 })
+  if (r.error || r.status !== 0) return []
+  const out = []
+  for (const line of String(r.stdout || '').split('\n')) {
+    const parts = line.split('|').map(s => s.trim())
+    if (parts.length < 3) continue
+    if (!parts[1]) continue
+    out.push({ version: parts[1], repo: parts[2] })
+  }
+  return out
+}
+
+async function aptInstalledVersion(pkg) {
+  const r = await execFileAsync('dpkg-query', ['-W', `-f=\${Version}`, pkg], { timeout: 10000 })
+  if (r.error || r.status !== 0) return null
+  const v = String(r.stdout || '').trim()
+  return v || null
+}
+
+async function listInstallableVersions(appKey, target) {
+  const packages = []
+  for (const cand of packageCandidates(appKey, target)) {
+    const raw = await aptMadison(cand.pkg)
+    const installed = await aptInstalledVersion(cand.pkg)
+    const seen = new Set()
+    const versions = []
+    for (const v of raw) {
+      if (seen.has(v.version)) continue
+      seen.add(v.version)
+      versions.push({ version: v.version, repo: v.repo, installed: v.version === installed })
+    }
+    packages.push({
+      pkg: cand.pkg,
+      label: cand.label,
+      installed_version: installed,
+      versions
+    })
+  }
+  return packages
+}
+
+/** systemd 的通用噪声行，这些对定位问题没有帮助 */
+const SYSTEMD_NOISE = /^(Job for |See "systemctl|░░|Subject:|Defined-By:|Support:|The unit |TriggeredBy:)/
+
+/**
+ * 从 journalctl 中提取服务启动失败的真实根因。
+ * systemctl 的 stderr 只有「Job for docker.service failed because the control process
+ * exited with error code」这类套话，用户据此无法排查；真正的原因（例如
+ * dockerd 的 "Failed to Setup IP tables ... MASQUERADE"）只出现在 journal 里。
+ */
+async function describeSystemdFailure(serviceName, child) {
+  let root = ''
+  try {
+    const j = await execFileAsync(
+      'journalctl',
+      ['-u', serviceName, '-n', '60', '--no-pager', '-o', 'cat'],
+      { timeout: 8000, maxBuffer: 2 * 1024 * 1024 }
+    )
+    const lines = String(j.stdout || '')
+      .split('\n')
+      .map(l => l.trim())
+      .filter(l => l && !SYSTEMD_NOISE.test(l))
+    const candidate = [...lines].reverse().find(l =>
+      /failed to start daemon|level=error|level=fatal|error:|denied|No such file|not found|missing kernel module|cannot|Unable to/i.test(l)
+    )
+    if (candidate) root = candidate
+  } catch {}
+
+  if (!root) {
+    const fromStderr = String(child?.stderr || '')
+      .split('\n')
+      .map(l => l.trim())
+      .filter(l => l && !SYSTEMD_NOISE.test(l))
+      .pop()
+    if (fromStderr) root = fromStderr
+  }
+
+  if (!root) {
+    return `服务 [${serviceName}] 操作失败，systemd 未给出具体原因，请执行 journalctl -xeu ${serviceName} 查看`
+  }
+  const trimmed = root.length > 400 ? `${root.slice(0, 400)}…` : root
+  return `服务 [${serviceName}] 操作失败：${trimmed}`
+}
+
 export async function handleApps(pathname, req, res, url, ctx) {
   if (!pathname.startsWith('/api/v1/apps/')) return false
 
@@ -389,6 +488,31 @@ export async function handleApps(pathname, req, res, url, ctx) {
     return true
   }
 
+  // 查询某个应用在 apt 源中真实可安装的版本（AG-PKG-01）
+  // 之前「安装 MySQL / MariaDB」只能装发行版默认版本，界面上写的 10.11 之类
+  // 只是目录里的预设文案，和实际能装的版本无关。现在改为向 apt 查询后再让用户选。
+  const versionsMatch = pathname.match(/^\/api\/v1\/apps\/([a-zA-Z0-9_-]+)\/versions$/)
+  if (versionsMatch && req.method === 'GET') {
+    const appKey = versionsMatch[1]
+    const target = marketApps.find(a => a.key === appKey)
+    if (!target) {
+      res.json(null, `未知的软件标识: ${appKey}`, 404)
+      return true
+    }
+    try {
+      const packages = await listInstallableVersions(appKey, target)
+      res.json({
+        app_key: appKey,
+        app_name: target.name,
+        packages,
+        total_versions: packages.reduce((n, p) => n + p.versions.length, 0)
+      })
+    } catch (e) {
+      res.json(null, `查询可安装版本失败: ${e.message}`, 500)
+    }
+    return true
+  }
+
   const installMatch = pathname.match(/^\/api\/v1\/apps\/([a-zA-Z0-9_-]+)\/install$/)
   if (installMatch && req.method === 'POST') {
     const appKey = installMatch[1]
@@ -399,14 +523,22 @@ export async function handleApps(pathname, req, res, url, ctx) {
     let pkgName = target?.pkg || appKey
     let targetDisplayName = target?.name || appKey
 
-    if (appKey === 'mysql') {
-      if (reqVersion.toLowerCase().includes('mysql 8') || reqVersion === 'mysql-8.0') {
-        pkgName = 'mysql-server'
-        targetDisplayName = 'MySQL 8.0'
-      } else {
-        pkgName = 'mariadb-server'
-        targetDisplayName = 'MariaDB 10.11 (LTS)'
+    // 允许前端指定发行包与精确版本（AG-PKG-01）。包名必须来自该应用的候选白名单，
+    // 版本号只接受 apt 合法的字符集，避免把任意字符串拼进 apt 参数。
+    const candidates = packageCandidates(appKey, target)
+    const reqPkg = String(body.pkg || '').trim()
+    if (reqPkg) {
+      const cand = candidates.find(c => c.pkg === reqPkg)
+      if (!cand) {
+        res.json(null, `不支持安装软件包 ${reqPkg}（不在 ${targetDisplayName} 的候选列表中）`, 400)
+        return true
       }
+      pkgName = cand.pkg
+      targetDisplayName = `${target.name} · ${cand.label}`
+    }
+    if (reqVersion && !/^[A-Za-z0-9.+~:_-]{1,80}$/.test(reqVersion)) {
+      res.json(null, `版本号格式非法: ${reqVersion}`, 400)
+      return true
     }
 
     for (const existing of appInstallTasks.values()) {
@@ -421,18 +553,19 @@ export async function handleApps(pathname, req, res, url, ctx) {
     }
 
     const taskId = `task_${Date.now()}`
+    const installTarget = reqVersion ? `${pkgName}=${reqVersion}` : pkgName
     const task = {
       task_id: taskId,
       app_key: appKey,
       stage: 'installing',
       progress_percent: 20,
-      logs: [`[armguard-pkg] 正在调用 apt-get 安装 ${targetDisplayName} (${pkgName})...`],
+      logs: [`[armguard-pkg] 正在调用 apt-get 安装 ${targetDisplayName} (${installTarget})...`],
       log_tail: `正在安装 ${targetDisplayName}...`,
       started_at: new Date().toISOString()
     }
     appInstallTasks.set(taskId, task)
 
-    const child = spawn('apt-get', ['install', '-y', pkgName], {
+    const child = spawn('apt-get', ['install', '-y', installTarget], {
       env: { ...process.env, DEBIAN_FRONTEND: 'noninteractive' },
       stdio: ['ignore', 'pipe', 'pipe']
     })
@@ -921,13 +1054,17 @@ export async function handleApps(pathname, req, res, url, ctx) {
     }
 
     try {
-      const child = spawnSync('systemctl', [action, serviceName], { encoding: 'utf-8' })
-      if (child.status === 0) {
+      const child = await execFileAsync('systemctl', [action, serviceName], { timeout: 60000 })
+      if (!child.error && child.status === 0) {
         invalidateMarketAppsCache()
         ctx.logOperation(ctx.currentUser(), `服务控制 [${action}]`, serviceName)
         res.json(null, `服务 [${serviceName}] 已成功${action === 'start' ? '启动' : action === 'stop' ? '停止' : action === 'restart' ? '重启' : '重载'}`)
       } else {
-        res.json(null, child.stderr || `操作服务失败`, 500)
+        // systemd 自己只给「Job for xxx failed…」这种通用文案，
+        // 真正的根因在 journalctl 里（例如 dockerd 的 iptables/MASQUERADE 报错），必须捞出来给用户。
+        const detail = await describeSystemdFailure(serviceName, child)
+        ctx.logOperation(ctx.currentUser(), `服务控制 [${action}]`, `${serviceName}: ${detail}`, null, 'failed')
+        res.json(null, detail, 500)
       }
     } catch (e) {
       res.json(null, e.message, 500)

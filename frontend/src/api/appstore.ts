@@ -55,8 +55,27 @@ export interface AppManagementData {
   visual_config: Record<string, any>
 }
 
-export const appStoreApi = {
-  getMarketList: (refresh = false) =>
+export interface InstallableVersion {
+  version: string
+  repo: string
+  installed: boolean
+}
+
+export interface InstallablePackage {
+  pkg: string
+  label: string
+  installed_version: string | null
+  versions: InstallableVersion[]
+}
+
+export interface InstallableVersions {
+  app_key: string
+  app_name: string
+  packages: InstallablePackage[]
+  total_versions: number
+}
+
+export const appStoreApi = {  getMarketList: (refresh = false) =>
     apiClient.get<ApiResponse<{ list: AppMarketItem[] }>>('/apps/market', {
       params: refresh ? { refresh: '1' } : undefined,
     }),
@@ -65,11 +84,14 @@ export const appStoreApi = {
     apiClient.get<ApiResponse<{ list: AppTaskProgress[] }>>('/apps/tasks', {
       headers: { 'X-AG-Passive': '1' },
     }),
-  installApp: (key: string, version: string, compileFromSource = false) =>
+  installApp: (key: string, version: string, compileFromSource = false, pkg?: string) =>
     apiClient.post<ApiResponse<{ task_id: string }>>(`/apps/${key}/install`, {
       version,
+      pkg,
       compile_from_source: compileFromSource,
     }),
+  getInstallableVersions: (key: string) =>
+    apiClient.get<ApiResponse<InstallableVersions>>(`/apps/${key}/versions`),
   uninstallApp: (key: string) => apiClient.post<ApiResponse<void>>(`/apps/${key}/uninstall`),
   getTaskProgress: (key: string, taskId: string) =>
     apiClient.get<ApiResponse<AppTaskProgress>>(`/apps/${key}/install-progress`, {

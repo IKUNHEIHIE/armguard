@@ -63,19 +63,36 @@ interface NavGroup {
 
           <nav class="nav-groups" aria-label="功能模块导航">
             <div *ngFor="let grp of navGroups" class="nav-group">
-              <div class="group-label">{{ grp.group }}</div>
-              <a
-                *ngFor="let item of grp.items"
-                [routerLink]="item.path"
-                routerLinkActive="active-pill"
-                [routerLinkActiveOptions]="{ exact: item.path === '/' }"
-                class="m3-nav-item"
-                (click)="isMobile() && mobileDrawerOpen.set(false)"
+              <button
+                type="button"
+                class="group-label group-toggle"
+                [attr.aria-expanded]="!isGroupCollapsed(grp.group)"
+                [attr.aria-controls]="'nav-group-' + grp.group"
+                (click)="toggleGroup(grp.group)"
               >
-                <mat-icon class="nav-icon" aria-hidden="true">{{ item.icon }}</mat-icon>
-                <span class="nav-label">{{ item.label }}</span>
-                <span *ngIf="item.badge" class="nav-badge font-mono">{{ item.badge }}</span>
-              </a>
+                <span class="group-label-text">{{ grp.group }}</span>
+                <mat-icon class="group-chevron" aria-hidden="true">
+                  {{ isGroupCollapsed(grp.group) ? 'expand_more' : 'expand_less' }}
+                </mat-icon>
+              </button>
+              <div
+                class="group-items"
+                [id]="'nav-group-' + grp.group"
+                *ngIf="!isGroupCollapsed(grp.group)"
+              >
+                <a
+                  *ngFor="let item of grp.items"
+                  [routerLink]="item.path"
+                  routerLinkActive="active-pill"
+                  [routerLinkActiveOptions]="{ exact: item.path === '/' }"
+                  class="m3-nav-item"
+                  (click)="isMobile() && mobileDrawerOpen.set(false)"
+                >
+                  <mat-icon class="nav-icon" aria-hidden="true">{{ item.icon }}</mat-icon>
+                  <span class="nav-label">{{ item.label }}</span>
+                  <span *ngIf="item.badge" class="nav-badge font-mono">{{ item.badge }}</span>
+                </a>
+              </div>
             </div>
           </nav>
 
@@ -279,6 +296,47 @@ interface NavGroup {
         color: var(--ag-on-surface-variant);
         letter-spacing: 0.03em;
       }
+      .group-toggle {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        width: calc(100% - 16px);
+        margin: 0 8px 6px;
+        padding: 6px 8px;
+        border: none;
+        border-radius: 8px;
+        background: transparent;
+        cursor: pointer;
+        text-align: left;
+        min-height: 32px;
+        transition: background 0.15s ease, color 0.15s ease;
+      }
+      .group-toggle:hover {
+        background: color-mix(in srgb, var(--ag-primary) 8%, transparent);
+        color: var(--ag-primary);
+      }
+      .group-toggle:focus-visible {
+        outline: 2px solid var(--ag-primary);
+        outline-offset: 1px;
+      }
+      .group-label-text {
+        flex: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .group-chevron {
+        width: 16px;
+        height: 16px;
+        font-size: 16px;
+        line-height: 16px;
+        opacity: 0.75;
+      }
+      .group-items {
+        display: flex;
+        flex-direction: column;
+      }
       .m3-nav-item {
         display: flex;
         align-items: center;
@@ -481,6 +539,8 @@ export class AppComponent implements OnInit, OnDestroy {
   readonly mobileDrawerOpen = signal(false)
   readonly currentPageTitle = signal('首页')
   readonly navError = signal<string | null>(null)
+  /** 侧边栏分组折叠状态（按分组名持久化到 localStorage） */
+  readonly collapsedGroups = signal<Record<string, boolean>>(this.readCollapsedGroups())
   private lastFailedUrl: string | null = null
   private sessionBootstrapped = false
 
@@ -572,6 +632,44 @@ export class AppComponent implements OnInit, OnDestroy {
     this.taskCenter.syncServerAppTasks()
   }
 
+  private readCollapsedGroups(): Record<string, boolean> {
+    try {
+      const raw = localStorage.getItem('armguard_nav_collapsed')
+      const parsed = raw ? JSON.parse(raw) : {}
+      return parsed && typeof parsed === 'object' ? parsed : {}
+    } catch {
+      return {}
+    }
+  }
+
+  private persistCollapsedGroups(state: Record<string, boolean>) {
+    try {
+      localStorage.setItem('armguard_nav_collapsed', JSON.stringify(state))
+    } catch {
+      /* 隐私模式下 localStorage 可能不可写，忽略即可 */
+    }
+  }
+
+  isGroupCollapsed(group: string): boolean {
+    return this.collapsedGroups()[group] === true
+  }
+
+  toggleGroup(group: string) {
+    const next = { ...this.collapsedGroups() }
+    if (next[group]) delete next[group]
+    else next[group] = true
+    this.collapsedGroups.set(next)
+    this.persistCollapsedGroups(next)
+  }
+
+  expandGroup(group: string) {
+    if (!this.collapsedGroups()[group]) return
+    const next = { ...this.collapsedGroups() }
+    delete next[group]
+    this.collapsedGroups.set(next)
+    this.persistCollapsedGroups(next)
+  }
+
   private updateTitleFromUrl(url: string) {
     const cleanUrl = url.split('?')[0]
     for (const grp of this.navGroups) {
@@ -581,14 +679,17 @@ export class AppComponent implements OnInit, OnDestroy {
           (item.path !== '/' && cleanUrl.startsWith(item.path))
         ) {
           this.currentPageTitle.set(item.label)
+          // 导航到某个分组内的页面时自动展开该分组，避免「点了链接却看不见当前项」
+          if (this.isGroupCollapsed(grp.group)) {
+            this.expandGroup(grp.group)
+          }
           return
         }
       }
     }
   }
 
-  retryNavigation() {
-    if (this.lastFailedUrl) {
+  retryNavigation() {    if (this.lastFailedUrl) {
       this.router.navigateByUrl(this.lastFailedUrl)
     } else {
       this.navError.set(null)

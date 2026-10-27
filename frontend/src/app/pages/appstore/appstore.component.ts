@@ -8,7 +8,7 @@ import { HasUnsavedChanges } from '../../core/unsaved-changes.guard'
 import { AgStateBannerComponent } from '../../components/ag-state-banner.component'
 import { AgModalComponent } from '../../components/ag-modal.component'
 import { WarpPluginDialogComponent } from '../../components/warp-plugin-dialog.component'
-import { appStoreApi, AppMarketItem, AppManagementData } from '@/api/appstore'
+import { appStoreApi, AppMarketItem, AppManagementData, InstallablePackage } from '@/api/appstore'
 
 @Component({
   selector: 'ag-appstore',
@@ -167,6 +167,15 @@ import { appStoreApi, AppMarketItem, AppManagementData } from '@/api/appstore'
                 {{ isInstallingApp(app.key) ? '正在后台安装...' : '一键安装 (APT)' }}
               </button>
               <button
+                *ngIf="app.status !== 'installed'"
+                mat-stroked-button
+                [disabled]="isInstallingApp(app.key) || taskCenter.hasActiveAptTask()"
+                (click)="openVersionPicker(app)"
+                matTooltip="查询 apt 源中真实可安装的版本后再选择"
+              >
+                选择版本
+              </button>
+              <button
                 *ngIf="app.status === 'installed'"
                 mat-stroked-button
                 color="primary"
@@ -253,6 +262,81 @@ import { appStoreApi, AppMarketItem, AppManagementData } from '@/api/appstore'
         </div>
       </ag-modal>
 
+      <!-- 安装版本选择（AG-PKG-01）：先向 apt 查询真实可安装版本，再由用户挑选 -->
+      <ag-modal
+        [open]="!!versionPicker()"
+        [title]="'选择安装版本: ' + (versionPicker()?.app?.name || '')"
+        icon="tune"
+        size="lg"
+        [submitting]="versionInstalling()"
+        (close)="closeVersionPicker()"
+      >
+        <div class="font-mono" *ngIf="versionPicker() as vp" style="display: flex; flex-direction: column; gap: 14px">
+          <ag-state-banner
+            *ngIf="vp.loading"
+            state="loading"
+            title="正在查询 apt 源中的可安装版本..."
+          />
+          <ag-state-banner
+            *ngIf="vp.error"
+            state="error"
+            title="查询可安装版本失败"
+            [description]="vp.error"
+            primaryActionLabel="重试"
+            (primaryAction)="openVersionPicker(vp.app)"
+          />
+
+          <ng-container *ngIf="!vp.loading && !vp.error">
+            <p class="m3-hint" style="margin: 0">
+              以下版本来自当前已启用的 apt 源。若只有一个版本，说明该系统源里只提供这一个包；
+              可先在「工具箱 → 镜像源」切换到其他源后再查询。
+            </p>
+
+            <div *ngFor="let p of vp.packages" class="m3-card" style="display: flex; flex-direction: column; gap: 8px">
+              <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap">
+                <strong>{{ p.label }}</strong>
+                <span class="m3-badge font-mono">{{ p.pkg }}</span>
+                <span *ngIf="p.installed_version" class="m3-badge font-mono">
+                  已安装 {{ p.installed_version }}
+                </span>
+              </div>
+
+              <div *ngIf="p.versions.length === 0" class="m3-hint">
+                当前 apt 源中没有可安装版本（该软件包可能未包含在已启用的源中）。
+              </div>
+
+              <label
+                *ngFor="let v of p.versions"
+                class="version-option"
+                [class.version-option-active]="isVersionSelected(p.pkg, v.version)"
+              >
+                <input
+                  type="radio"
+                  [name]="'ver-' + p.pkg"
+                  [checked]="isVersionSelected(p.pkg, v.version)"
+                  (change)="selectVersion(p.pkg, v.version)"
+                />
+                <span class="font-mono" style="font-weight: 600">{{ v.version }}</span>
+                <span class="version-repo">{{ v.repo }}</span>
+                <span *ngIf="v.installed" class="m3-badge primary">当前已装</span>
+              </label>
+            </div>
+          </ng-container>
+        </div>
+
+        <div modal-footer style="display: flex; gap: 10px; justify-content: flex-end">
+          <button mat-stroked-button (click)="closeVersionPicker()">取消</button>
+          <button
+            mat-flat-button
+            color="primary"
+            [disabled]="versionInstalling() || !selectedVersionPkg()"
+            (click)="confirmVersionInstall()"
+          >
+            {{ versionInstalling() ? '正在提交...' : '安装所选版本' }}
+          </button>
+        </div>
+      </ag-modal>
+
       <ag-warp-plugin-dialog
         [open]="warpOpen()"
         (close)="warpOpen.set(false)"
@@ -294,6 +378,31 @@ import { appStoreApi, AppMarketItem, AppManagementData } from '@/api/appstore'
         padding-top: 6px;
         border-top: 1px solid var(--ag-outline-variant);
       }
+      .version-option {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 12px;
+        border-radius: 10px;
+        border: 1px solid var(--ag-outline-variant);
+        cursor: pointer;
+        transition: border-color 0.15s ease, background 0.15s ease;
+      }
+      .version-option:hover {
+        border-color: var(--ag-primary);
+      }
+      .version-option-active {
+        border-color: var(--ag-primary);
+        background: color-mix(in srgb, var(--ag-primary) 10%, transparent);
+      }
+      .version-option input {
+        accent-color: var(--ag-primary);
+      }
+      .version-repo {
+        font-size: 0.72rem;
+        color: var(--ag-on-surface-variant);
+        word-break: break-all;
+      }
     `,
   ],
 })
@@ -317,6 +426,16 @@ export class AppstoreComponent implements OnInit, OnDestroy, HasUnsavedChanges {
   readonly savingConfig = signal(false)
 
   readonly warpOpen = signal(false)
+
+  // 安装版本选择（AG-PKG-01）
+  readonly versionPicker = signal<{
+    app: AppMarketItem
+    loading: boolean
+    error: string | null
+    packages: InstallablePackage[]
+  } | null>(null)
+  readonly selectedVersionPkg = signal('')
+  readonly versionInstalling = signal(false)
 
   private unlistenTaskComplete: (() => void) | null = null
 
@@ -424,10 +543,10 @@ export class AppstoreComponent implements OnInit, OnDestroy, HasUnsavedChanges {
     }
   }
 
-  async installApp(app: AppMarketItem) {
-    const ver = app.versions[0] || 'default'
+  async installApp(app: AppMarketItem, pkg?: string, version?: string) {
+    const ver = version || app.versions[0] || 'default'
     try {
-      const res = await appStoreApi.installApp(app.key, ver, false)
+      const res = await appStoreApi.installApp(app.key, ver, false, pkg)
       const taskId = res.data?.data?.task_id
       if (!taskId) {
         this.toast.error('未获取到安装任务 ID')
@@ -437,6 +556,54 @@ export class AppstoreComponent implements OnInit, OnDestroy, HasUnsavedChanges {
       this.toast.info(`已在后台启动安装 ${app.name}，可随时在右上角任务中心查看进度`)
     } catch (e: any) {
       this.toast.error(e.message)
+    }
+  }
+
+  // ================= 安装版本选择 =================
+  async openVersionPicker(app: AppMarketItem) {
+    this.versionPicker.set({ app, loading: true, error: null, packages: [] })
+    this.selectedVersionPkg.set('')
+    try {
+      const res = await appStoreApi.getInstallableVersions(app.key)
+      const packages = res.data?.data?.packages || []
+      this.versionPicker.set({ app, loading: false, error: null, packages })
+      const first = packages.find(p => p.versions.length > 0)
+      if (first) {
+        const pick = first.versions.find(v => v.installed) || first.versions[0]
+        this.selectedVersionPkg.set(`${first.pkg}=${pick.version}`)
+      }
+    } catch (e: any) {
+      this.versionPicker.set({ app, loading: false, error: e?.message || '查询失败', packages: [] })
+    }
+  }
+
+  closeVersionPicker() {
+    this.versionPicker.set(null)
+    this.selectedVersionPkg.set('')
+  }
+
+  isVersionSelected(pkg: string, version: string): boolean {
+    return this.selectedVersionPkg() === `${pkg}=${version}`
+  }
+
+  selectVersion(pkg: string, version: string) {
+    this.selectedVersionPkg.set(`${pkg}=${version}`)
+  }
+
+  async confirmVersionInstall() {
+    const vp = this.versionPicker()
+    const sel = this.selectedVersionPkg()
+    if (!vp || !sel) return
+    const idx = sel.indexOf('=')
+    const pkg = sel.slice(0, idx)
+    const version = sel.slice(idx + 1)
+    this.versionInstalling.set(true)
+    try {
+      await this.installApp(vp.app, pkg, version)
+      this.closeVersionPicker()
+      this.loadApps()
+    } finally {
+      this.versionInstalling.set(false)
     }
   }
 
