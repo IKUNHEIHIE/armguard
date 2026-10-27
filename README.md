@@ -26,7 +26,112 @@
 
 ---
 
-## ✨ 2. 核心差异化特性
+## 🚀 2. 快速安装与部署
+
+### 方式一：一键安装脚本（推荐）
+
+适用于 Debian 12+ / Ubuntu 22.04+ / Armbian / Raspberry Pi OS 等 systemd 发行版，
+支持 `aarch64` / `armv7l` / `x86_64` 三种架构。**脚本会自动准备 Node.js 运行时**，
+不需要事先安装任何依赖。
+
+```bash
+curl -fsSLO https://github.com/IKUNHEIHIE/armguard/releases/download/v0.2.0/install.sh
+sudo bash install.sh
+```
+
+> 国内网络若访问 GitHub 缓慢，可在地址前加加速前缀：
+> `curl -fsSLO https://ghfast.top/https://github.com/IKUNHEIHIE/armguard/releases/download/v0.2.0/install.sh`
+
+安装完成后会直接打印访问地址与初始管理员密码。
+
+> 脚本不依赖 `curl`/`wget` 预装，也不要求事先装 Node.js —— 缺少时会自动补齐。
+
+**常用参数**
+
+| 命令 | 说明 |
+| :--- | :--- |
+| `sudo bash install.sh` | 默认安装（端口 `8888`，安全入口 `/armguard`） |
+| `sudo bash install.sh --port 21000` | 指定监听端口 |
+| `sudo bash install.sh --entrance /mysecret` | 指定安全入口路径 |
+| `sudo bash install.sh --update` | 检查并更新到 GitHub 最新发行版 |
+| `sudo bash install.sh --upgrade` | 升级已有安装（先自动备份，数据目录保留） |
+| `sudo bash install.sh --uninstall` | 卸载程序与服务（保留 `/var/lib/armguard` 数据） |
+| `sudo bash install.sh --uninstall --purge` | 连同数据一并删除 |
+| `sudo bash install.sh --help` | 查看全部选项 |
+
+**脚本做了哪些事**
+
+1. 校验架构与 systemd 环境，识别发行版；
+2. 检测 Node.js，低于 v20 时依次尝试 `apt` → 官方二进制包（国内走 npmmirror 镜像）；
+3. 从 GitHub Releases 下载对应架构无关的发行包（纯 JS 产物，架构无关），国内网络自动回退加速镜像；
+4. 解压至 `/opt/armguard`，补齐运行期依赖 `ws`；
+5. 创建 `0700` 数据目录 `/var/lib/armguard` 与备份目录 `/var/backups/armguard`；
+6. 注册 `armguard.service`（含 cgroup 内存上限 `MemoryHigh=256M` / `MemoryMax=512M`），
+   开机自启并立即启动，最后打印访问地址与初始密码。
+
+> 升级时会把旧版本完整打包到 `/var/backups/armguard/upgrades/<时间戳>/`，
+> 数据目录与管理员凭证不会被动到。
+
+### 安装后的快捷管理菜单 `ag`
+
+安装完成后，在终端直接输入 `ag` 即可打开管理菜单（类似宝塔的 `bt` 命令）：
+
+```text
+╔══════════════════════════════════════╗
+║      ArmGuard 面板管理菜单           ║
+╚══════════════════════════════════════╝
+  当前版本: v0.2.1   服务: active
+
+  1) 修复面板  重新安装当前版本，保留数据
+  2) 更新面板  升级到 GitHub 最新发行版
+  3) 重启面板
+  4) 运行状态
+  5) 最近日志
+  0) 退出
+```
+
+也支持非交互调用，便于写进脚本或定时任务：
+
+```bash
+ag status      # 版本 / 服务状态 / 内存占用 / 监听端口
+ag update      # 检查并更新到最新版
+ag repair      # 重装当前版本（保留数据）
+ag restart     # 重启面板
+ag logs        # 最近 50 行日志
+```
+
+- **修复面板**：重新下载并覆盖当前版本的程序文件，`/var/lib/armguard` 数据与管理员凭证完整保留；
+- **更新面板**：查询 GitHub 最新发行版，比对本地 `VERSION`，有新版才升级（升级前自动备份）；
+- **重启面板**：`systemctl restart armguard`，并检查是否真正起来。
+
+### 方式二：使用发行包手动安装
+
+```bash
+# 从 https://github.com/IKUNHEIHIE/armguard/releases 下载对应版本
+tar -zxvf armguard-panel-v0.2.0.tar.gz
+cd armguard-panel
+sudo bash install.sh
+```
+
+### 方式三：源码编译与本地开发
+
+```bash
+# 1. 克隆代码仓库
+git clone https://github.com/IKUNHEIHIE/armguard.git
+cd armguard
+
+# 2. 安装后端与前端依赖并构建前端产物
+npm ci
+npm --prefix frontend ci
+npm --prefix frontend run build
+
+# 3. 启动后端服务
+npm start
+```
+
+---
+
+## ✨ 3. 核心差异化特性
 
 | 核心特性 | 传统服务器面板 | ArmGuard（本面板） |
 | :--- | :--- | :--- |
@@ -41,7 +146,7 @@
 
 ---
 
-## 🖥️ 3. 核心功能矩阵
+## 🖥️ 4. 核心功能矩阵
 
 ### 3.1 仪表盘与 ARM 硬件专属诊断
 - **基础资源拓扑**：实时 CPU 使用率（多核心独立波形）、物理内存 (RAM) 与 Swap 深度追踪、主磁盘存储空间、网络 I/O 实时下行/上行速率与 1/5/15m 系统平均负载。
@@ -122,78 +227,6 @@
   下载优先走 npmmirror，按 CPU 架构自动选包；
 - **卸载即后台任务**：安装与卸载都进入右上角「任务中心」，跨页面持续追踪进度与日志，
   卸载使用 `apt-get remove --autoremove`，并复核系统真实状态，避免「卸载成功但还装着」。
-
----
-
-## 🚀 4. 快速安装与部署
-
-### 方式一：一键安装脚本（推荐）
-
-适用于 Debian 12+ / Ubuntu 22.04+ / Armbian / Raspberry Pi OS 等 systemd 发行版，
-支持 `aarch64` / `armv7l` / `x86_64` 三种架构。**脚本会自动准备 Node.js 运行时**，
-不需要事先安装任何依赖。
-
-```bash
-curl -fsSLO https://github.com/IKUNHEIHIE/armguard/releases/download/v0.2.0/install.sh
-sudo bash install.sh
-```
-
-> 国内网络若访问 GitHub 缓慢，可在地址前加加速前缀：
-> `curl -fsSLO https://ghfast.top/https://github.com/IKUNHEIHIE/armguard/releases/download/v0.2.0/install.sh`
-
-安装完成后会直接打印访问地址与初始管理员密码。
-
-> 脚本不依赖 `curl`/`wget` 预装，也不要求事先装 Node.js —— 缺少时会自动补齐。
-
-**常用参数**
-
-| 命令 | 说明 |
-| :--- | :--- |
-| `sudo bash install.sh` | 默认安装（端口 `8888`，安全入口 `/armguard`） |
-| `sudo bash install.sh --port 21000` | 指定监听端口 |
-| `sudo bash install.sh --entrance /mysecret` | 指定安全入口路径 |
-| `sudo bash install.sh --upgrade` | 升级已有安装（先自动备份，数据目录保留） |
-| `sudo bash install.sh --uninstall` | 卸载程序与服务（保留 `/var/lib/armguard` 数据） |
-| `sudo bash install.sh --uninstall --purge` | 连同数据一并删除 |
-| `sudo bash install.sh --help` | 查看全部选项 |
-
-**脚本做了哪些事**
-
-1. 校验架构与 systemd 环境，识别发行版；
-2. 检测 Node.js，低于 v20 时依次尝试 `apt` → 官方二进制包（国内走 npmmirror 镜像）；
-3. 从 GitHub Releases 下载对应架构无关的发行包（纯 JS 产物，架构无关），国内网络自动回退加速镜像；
-4. 解压至 `/opt/armguard`，补齐运行期依赖 `ws`；
-5. 创建 `0700` 数据目录 `/var/lib/armguard` 与备份目录 `/var/backups/armguard`；
-6. 注册 `armguard.service`（含 cgroup 内存上限 `MemoryHigh=256M` / `MemoryMax=512M`），
-   开机自启并立即启动，最后打印访问地址与初始密码。
-
-> 升级时会把旧版本完整打包到 `/var/backups/armguard/upgrades/<时间戳>/`，
-> 数据目录与管理员凭证不会被动到。
-
-### 方式二：使用发行包手动安装
-
-```bash
-# 从 https://github.com/IKUNHEIHIE/armguard/releases 下载对应版本
-tar -zxvf armguard-panel-v0.2.0.tar.gz
-cd armguard-panel
-sudo bash install.sh
-```
-
-### 方式三：源码编译与本地开发
-
-```bash
-# 1. 克隆代码仓库
-git clone https://github.com/IKUNHEIHIE/armguard.git
-cd armguard
-
-# 2. 安装后端与前端依赖并构建前端产物
-npm ci
-npm --prefix frontend ci
-npm --prefix frontend run build
-
-# 3. 启动后端服务
-npm start
-```
 
 ---
 
@@ -287,6 +320,14 @@ python backend/scripts/test_real_acme_ssl.py
 
 本项目采用 [MIT License](LICENSE) 开源协议，欢迎自由使用、修改与分发。
 ## 📝 10. 版本历史
+
+### v0.2.1
+- 新增 `ag` 快捷管理菜单（修复 / 更新 / 重启 / 状态 / 日志），安装后终端输入 `ag` 即可
+- `install.sh` 新增 `--update`：自动查询 GitHub 最新发行版并升级
+- 首页常驻显示 CPU 型号与逻辑核心数（此前只在展开「硬件详情」后可见）
+- 修复安装脚本在 `set -o pipefail` 下的换行兼容、无 curl/wget 环境、变量被
+  `/etc/os-release` 覆盖等问题
+- README 将「快速安装与部署」提到第二节，并补充 `ag` 菜单说明
 
 ### v0.2.0（首个正式发行版）
 - **一键安装脚本**：`install.sh` 自动准备 Node.js、下载发行包、注册 systemd 服务，

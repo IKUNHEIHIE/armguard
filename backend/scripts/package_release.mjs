@@ -84,9 +84,11 @@ copyDir(path.join(ROOT, 'frontend/dist'), path.join(stage, 'dist'));
 log('复制 node_modules/ws');
 copyDir(path.join(ROOT, 'node_modules/ws'), path.join(stage, 'node_modules/ws'));
 fs.copyFileSync(path.join(ROOT, 'package.json'), path.join(stage, 'package.json'));
-if (fs.existsSync(path.join(ROOT, 'install.sh'))) {
-  fs.copyFileSync(path.join(ROOT, 'install.sh'), path.join(stage, 'install.sh'));
-  fs.chmodSync(path.join(stage, 'install.sh'), 0o755);
+for (const sh of ['install.sh', 'ag.sh']) {
+  const src = path.join(ROOT, sh);
+  if (!fs.existsSync(src)) continue;
+  fs.copyFileSync(src, path.join(stage, sh));
+  fs.chmodSync(path.join(stage, sh), 0o755);
 }
 fs.writeFileSync(path.join(stage, 'BUILD_COMMIT'), commit);
 fs.writeFileSync(path.join(stage, 'VERSION'), version);

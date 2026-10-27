@@ -39,6 +39,10 @@ import { appStoreApi, AppMarketItem } from '@/api/appstore'
               <span>主机: <strong class="font-mono">{{ system.info()?.hostname || '加载中...' }}</strong></span>
               <span> · 架构: <strong class="font-mono">{{ system.info()?.arch || 'ARM64' }}</strong></span>
               <span> · 系统: <strong>{{ system.info()?.distribution || system.info()?.os || 'Linux' }}</strong></span>
+              <span>
+                · CPU: <strong>{{ system.info()?.cpu_model || '识别中...' }}</strong>
+                <span class="font-mono" style="opacity: 0.75">({{ system.info()?.cpu_cores || 1 }} 核)</span>
+              </span>
               <span> · 最后采集: <strong class="font-mono">{{ system.lastUpdatedLabel() }}</strong></span>
             </div>
           </div>
@@ -72,7 +76,7 @@ import { appStoreApi, AppMarketItem } from '@/api/appstore'
 
         <!-- Expandable Hardware Details -->
         <div *ngIf="showHostDetail()" class="host-detail-drawer font-mono">
-          <div>处理器型号: <strong>{{ system.info()?.cpu_model || 'ARM SoC' }} ({{ system.info()?.cpu_cores || 1 }} 核)</strong></div>
+          <div>处理器型号: <strong>{{ system.info()?.cpu_model || 'ARM SoC' }}</strong> · 逻辑核心: <strong class="font-mono">{{ system.info()?.cpu_cores || 1 }}</strong></div>
           <div>内核版本: <strong>{{ system.info()?.kernel || '未知' }}</strong></div>
           <div>调速器策略: <strong>{{ rt().cpu.governor || '默认' }} ({{ system.pollIntervalMs() }}ms 采样)</strong></div>
           <div>面板版本: <strong>{{ system.info()?.panel_version || 'v0.2.0' }} ({{ system.info()?.build_commit || 'source' }})</strong></div>

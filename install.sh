@@ -53,6 +53,7 @@ ArmGuard 一键安装脚本
   sudo bash install.sh [选项]
 
 选项:
+  --update           检查并更新到 GitHub 最新发行版
   --upgrade          升级已有安装（自动备份旧版本，保留数据目录）
   --uninstall        卸载面板（默认保留 /var/lib/armguard 数据）
   --purge            与 --uninstall 搭配，连同数据目录一并删除
@@ -66,6 +67,7 @@ ArmGuard 一键安装脚本
 示例:
   sudo bash install.sh                        # 默认安装最新稳定版
   sudo bash install.sh --port 21000           # 指定端口
+  sudo bash install.sh --update               # 更新到最新发行版
   sudo bash install.sh --upgrade              # 升级到脚本内置版本
   sudo bash install.sh --uninstall            # 卸载（保留数据）
 EOF
@@ -77,6 +79,7 @@ EOF
 PURGE=0
 while [ $# -gt 0 ]; do
   case "$1" in
+    --update) ACTION="update"; shift ;;
     --upgrade) ACTION="upgrade"; shift ;;
     --uninstall) ACTION="uninstall"; shift ;;
     --purge) PURGE=1; shift ;;
@@ -264,6 +267,23 @@ download_release() {
 }
 
 # ---------------------------------------------------------------------------
+# 最新版本解析
+# ---------------------------------------------------------------------------
+# resolve_latest_version：查询 GitHub 最新发行版的 tag，输出不带 v 前缀的版本号
+resolve_latest_version() {
+  local tmpd
+  tmpd="$(mktemp -d)"
+  local api="https://api.github.com/repos/${REPO}/releases/latest"
+  local v=""
+  if fetch_quiet "$api" "$tmpd/latest.json" 25 && [ -s "$tmpd/latest.json" ]; then
+    v="$(sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v\{0,1\}\([^"]*\)".*/\1/p' "$tmpd/latest.json" | head -1)"
+  fi
+  rm -rf "$tmpd"
+  [ -n "$v" ] || return 1
+  printf '%s\n' "$v"
+}
+
+# ---------------------------------------------------------------------------
 # systemd 服务
 # ---------------------------------------------------------------------------
 write_service() {
@@ -351,6 +371,22 @@ do_install() {
     (cd "$INSTALL_DIR" && npm install --omit=dev --no-audit --no-fund >/dev/null 2>&1) || warn "ws 依赖安装失败，面板可能无法启动"
   fi
 
+  # 安装快捷管理菜单（ag）与安装脚本副本：ag 的修复/更新依赖它们
+  if [ -f "$src/ag.sh" ]; then
+    install -m 0755 "$src/ag.sh" /usr/local/bin/ag
+    ok "已安装管理菜单：终端输入 ag 即可打开"
+  else
+    warn "发行包内未包含 ag.sh，跳过管理菜单安装"
+  fi
+  if [ -f "$src/install.sh" ]; then
+    install -m 0755 "$src/install.sh" "$INSTALL_DIR/install.sh"
+  else
+    local self="${BASH_SOURCE[0]:-}"
+    if [ -n "$self" ] && [ -f "$self" ]; then
+      install -m 0755 "$self" "$INSTALL_DIR/install.sh"
+    fi
+  fi
+
   mkdir -p "$DATA_DIR" "$BACKUP_DIR"
   chmod 700 "$DATA_DIR"
 
@@ -390,6 +426,7 @@ do_install() {
   ${C_BOLD}安装目录${C_RESET}: ${INSTALL_DIR}
   ${C_BOLD}数据目录${C_RESET}: ${DATA_DIR}
   ${C_BOLD}服务管理${C_RESET}: systemctl {status|restart|stop} ${SERVICE_NAME}
+  ${C_BOLD}快捷菜单${C_RESET}: 终端输入 ag（修复 / 更新 / 重启 / 状态 / 日志）
 
 EOF
   if [ -n "$pw" ]; then
@@ -454,6 +491,22 @@ main() {
     upgrade)
       [ -d "$INSTALL_DIR/backend" ] || die "未检测到已安装的 ArmGuard，请先执行安装"
       install_node
+      do_install upgrade
+      ;;
+    update)
+      [ -d "$INSTALL_DIR/backend" ] || die "未检测到已安装的 ArmGuard，请先执行安装"
+      install_node
+      local cur latest
+      cur="$(cat "$INSTALL_DIR/VERSION" 2>/dev/null | tr -d ' \n\r' || true)"
+      [ -n "$cur" ] || cur="unknown"
+      info "当前版本: v${cur}"
+      latest="$(resolve_latest_version)" || die "无法获取最新版本（网络不可用时可手动指定：--version <版本> --upgrade）"
+      info "最新版本: v${latest}"
+      if [ "$latest" = "$cur" ]; then
+        ok "当前已是最新版本，无需更新"
+        exit 0
+      fi
+      RELEASE_VERSION="$latest"
       do_install upgrade
       ;;
     uninstall)
