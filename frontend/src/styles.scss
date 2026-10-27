@@ -584,7 +584,16 @@ table.m3-data-table {
 }
 
 /* Offline Icon Ligature Overflow Safeguard (FE-017) */
-mat-icon {
+/*
+ * 注意选择器权重：Angular Material 会给 <mat-icon> 自动追加 `material-icons` 类，
+ * 而 Google Fonts 的图标样式表里有一条 `.material-icons { font-family: "Material Icons" }`
+ * （类选择器，权重 0,1,0）。如果这里只用元素选择器 `mat-icon`（0,0,1），
+ * 就会被那条规则覆盖，导致自定义字体族完全不生效——图标永远走旧字体。
+ * 因此必须带上类，把权重提到 0,1,1 以上。
+ */
+mat-icon,
+mat-icon.mat-icon,
+mat-icon.material-icons {
   overflow: hidden;
   text-overflow: clip;
   white-space: nowrap;
