@@ -56,10 +56,12 @@ do_repair() {
   require_installer || return 1
   local ver
   ver="$(current_version)"
-  printf "\n将重新下载并覆盖 ArmGuard v%s 的程序文件（数据目录与管理员凭证保留）。\n" "$ver"
-  printf "确认继续？[y/N] "
-  read -r ans </dev/tty || ans=""
-  case "$ans" in y|Y|yes|YES) ;; *) info "已取消"; return 0 ;; esac
+  if [ "${AG_YES:-0}" != "1" ]; then
+    printf "\n将重新下载并覆盖 ArmGuard v%s 的程序文件（数据目录与管理员凭证保留）。\n" "$ver"
+    printf "确认继续？[y/N] "
+    read -r ans </dev/tty || ans=""
+    case "$ans" in y|Y|yes|YES) ;; *) info "已取消"; return 0 ;; esac
+  fi
   info "开始修复..."
   bash "$INSTALLER" --version "$ver" --upgrade -y
   return $?
@@ -134,6 +136,11 @@ show_menu() {
 
 main() {
   # 支持非交互用法：ag status / ag update ...
+  # -y / --yes：非交互确认（便于脚本调用）
+  if [ "${1:-}" = "-y" ] || [ "${1:-}" = "--yes" ]; then
+    AG_YES=1
+    shift
+  fi
   case "${1:-}" in
     repair) do_repair; exit $? ;;
     update) do_update; exit $? ;;
@@ -141,7 +148,7 @@ main() {
     status) do_status; exit 0 ;;
     logs) do_logs; exit 0 ;;
     -h|--help|help)
-      echo "用法: ag [repair|update|restart|status|logs]"
+      echo "用法: ag [-y] [repair|update|restart|status|logs]"
       echo "不带参数则进入交互菜单。"
       exit 0 ;;
   esac
