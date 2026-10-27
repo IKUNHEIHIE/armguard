@@ -1,5 +1,6 @@
 import os from 'os'
 import { spawnSync } from 'child_process'
+import { execFileAsync } from '../lib/exec.js'
 
 export function getDockerEnvStatus() {
   try {
@@ -236,7 +237,8 @@ export async function handleDocker(pathname, req, res, url, ctx) {
     const fullImg = rawImg.includes(':') ? rawImg : `${rawImg}:${rawTag}`
     try {
       ctx.logOperation(ctx.currentUser(), '开始拉取 Docker 镜像', fullImg)
-      const child = spawnSync('docker', ['pull', fullImg], { encoding: 'utf-8', timeout: 180000 })
+      // 异步执行：大镜像拉取可能持续数分钟，不能阻塞事件循环（AG-PERF-01）
+      const child = await execFileAsync('docker', ['pull', fullImg], { timeout: 180000 })
       if (child.status === 0) {
         ctx.logOperation(ctx.currentUser(), '成功拉取 Docker 镜像', fullImg)
         res.json({ image: fullImg, output: child.stdout }, `镜像 [${fullImg}] 拉取成功`)

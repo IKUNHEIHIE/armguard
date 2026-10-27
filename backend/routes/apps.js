@@ -1,6 +1,7 @@
 import fs from 'fs'
 import path from 'path'
 import { spawn, spawnSync, execSync } from 'child_process'
+import { execFileAsync } from '../lib/exec.js'
 import {
   warpConfig,
   getWarpSystemHealth,
@@ -499,7 +500,8 @@ export async function handleApps(pathname, req, res, url, ctx) {
     }
     const pkgName = target?.pkg || appKey
     try {
-      const rmRes = spawnSync('apt-get', ['remove', '-y', pkgName], { encoding: 'utf-8', timeout: 120000 })
+      // 异步执行：apt-get 卸载可能需要数十秒，不能阻塞事件循环（AG-PERF-01）
+      const rmRes = await execFileAsync('apt-get', ['remove', '-y', pkgName], { timeout: 120000 })
       if (rmRes.error || rmRes.status !== 0) {
         const detail = rmRes.error
           ? rmRes.error.message

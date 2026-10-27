@@ -1140,6 +1140,49 @@ wss.on('connection', (ws, req, session) => {
 })
 
 // -----------------------------------------------------------------------------
+// Graceful shutdown (AG-PERF-02)
+//
+// 面板作为 systemd 服务运行时，`systemctl restart/stop` 会发送 SIGTERM。
+// 此前进程没有信号处理，WebSocket 终端会话、在途请求和设置写入会被直接掐断；
+// 现在先停止接收新连接，通知前端「服务即将重启」，再在宽限期内退出。
+// -----------------------------------------------------------------------------
+let shuttingDown = false
+
+function shutdown(signal) {
+  if (shuttingDown) return
+  shuttingDown = true
+  console.log(`[ArmGuard] received ${signal}, shutting down gracefully...`)
+
+  const forceExit = setTimeout(() => {
+    console.error('[ArmGuard] graceful shutdown timed out, forcing exit')
+    process.exit(1)
+  }, 5000)
+  forceExit.unref()
+
+  try {
+    for (const client of wss.clients) {
+      try {
+        client.close(1001, 'Server shutting down')
+      } catch {}
+    }
+  } catch {}
+
+  server.close(() => {
+    clearTimeout(forceExit)
+    console.log('[ArmGuard] server closed, bye')
+    process.exit(0)
+  })
+
+  // server.close() 只等已有连接自然结束，这里主动断开空闲 keep-alive 连接
+  if (typeof server.closeIdleConnections === 'function') {
+    try { server.closeIdleConnections() } catch {}
+  }
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'))
+process.on('SIGINT', () => shutdown('SIGINT'))
+
+// -----------------------------------------------------------------------------
 // Startup: first-run admin (AG-004) + listen with port fallback (AG-010)
 // -----------------------------------------------------------------------------
 function listenOn(port) {

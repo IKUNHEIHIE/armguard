@@ -1,6 +1,7 @@
 import fs from 'fs'
 import path from 'path'
 import { spawnSync, execSync } from 'child_process'
+import { execFileAsync } from '../lib/exec.js'
 import { renderNginxSiteConf } from './sites.js'
 
 export function parseCertMetadata(certPath) {
@@ -229,7 +230,8 @@ export async function handleSSL(pathname, req, res, url, ctx) {
       }
 
       console.log(`[ArmGuard ACME] Executing certbot: certbot ${certbotArgs.join(' ')}`)
-      const certbotRes = spawnSync('certbot', certbotArgs, { encoding: 'utf-8', timeout: 60000 })
+      // 异步执行：ACME 签发通常需要 10~60 秒，不能阻塞事件循环（AG-PERF-01）
+      const certbotRes = await execFileAsync('certbot', certbotArgs, { timeout: 60000 })
 
       if (certbotRes.status !== 0) {
         const errMsg = certbotRes.stderr || certbotRes.stdout || 'Certbot 进程执行异常'

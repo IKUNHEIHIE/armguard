@@ -3,6 +3,7 @@ import net from 'net'
 import path from 'path'
 import crypto from 'crypto'
 import { spawnSync } from 'child_process'
+import { execFileAsync, tarExec } from '../lib/exec.js'
 
 // Keys that may be written through PUT /settings/panel, with validation (AG-009/AG-010)
 const ENTRANCE_RE = /^\/[A-Za-z0-9_-]{3,64}$/
@@ -365,7 +366,8 @@ export async function handleSettings(pathname, req, res, url, ctx) {
       const backupName = `armguard_panel_backup_${Date.now()}.tar.gz`
       backupPath = path.join(ctx.BACKUP_DIR, backupName)
 
-      const child = spawnSync('tar', ['-czf', backupPath, '-C', ctx.DATA_DIR, '.'], { encoding: 'utf-8', timeout: 120000 })
+      // 异步执行：备份可能需要数分钟，不能阻塞事件循环（AG-PERF-01）
+      const child = await tarExec(['-czf', backupPath, '-C', ctx.DATA_DIR, '.'], { timeout: 120000 })
       const stderr = (child.stderr || '').trim()
       // GNU tar exits 1 only for "file changed as we read it" (archive is still valid)
       const tolerated = child.status === 1 && /file changed as we read it/i.test(stderr)
@@ -373,7 +375,7 @@ export async function handleSettings(pathname, req, res, url, ctx) {
         throw new Error(child.error ? (child.error.code === 'ENOENT' ? '系统未安装 tar' : child.error.message) : (stderr || `tar 退出码 ${child.status}`))
       }
 
-      const verify = spawnSync('tar', ['-tzf', backupPath], { encoding: 'utf-8', timeout: 60000, maxBuffer: 16 * 1024 * 1024 })
+      const verify = await tarExec(['-tzf', backupPath], { timeout: 60000, maxBuffer: 16 * 1024 * 1024 })
       const entries = (verify.stdout || '').split('\n').filter(Boolean)
       if (verify.status !== 0 || entries.length === 0) {
         throw new Error(`备份包校验失败: ${(verify.stderr || '').trim() || '归档为空'}`)
@@ -539,8 +541,10 @@ export async function handleSettings(pathname, req, res, url, ctx) {
     }
     ctx.logOperation(ctx.currentUser(), '重启面板服务', 'PanelEngine')
     res.json(null, '面板正在重启，稍后将自动恢复连接...')
-    setTimeout(() => {
-      const r = spawnSync('systemctl', ['restart', 'armguard'], { encoding: 'utf-8', timeout: 30000 })
+    setTimeout(async () => {
+      // 必须异步：spawnSync 会锁住事件循环，导致进程无法响应 systemd 的 SIGTERM，
+      // 重启要等到 30s 超时后被 SIGKILL（AG-PERF-01）。
+      const r = await execFileAsync('systemctl', ['restart', 'armguard'], { timeout: 30000 })
       if (r.error || r.status !== 0) {
         console.error('[ArmGuard] systemctl restart armguard failed:', r.error?.message || r.stderr)
       }
@@ -566,7 +570,7 @@ export async function handleSettings(pathname, req, res, url, ctx) {
       res.json(null, '无效的时区', 400)
       return true
     }
-    const child = spawnSync('timedatectl', ['set-timezone', safeTz], { encoding: 'utf-8', timeout: 10000 })
+    const child = await execFileAsync('timedatectl', ['set-timezone', safeTz], { timeout: 10000 })
     if (child.error || child.status !== 0) {
       const reason = child.error
         ? (child.error.code === 'ENOENT' ? '系统未安装 timedatectl' : child.error.message)

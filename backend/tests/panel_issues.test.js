@@ -414,8 +414,12 @@ test('REV-001, REV-002, REV-005, REV-006, REV-011, REV-012: File sandbox symlink
     const symlinkDir = path.join(workDir, 'etc-link');
     let symlinkCreated = false;
     try {
-      fs.symlinkSync(process.platform === 'win32' ? 'C:\\Windows\\System32' : '/etc', symlinkDir, 'dir');
-      symlinkCreated = true;
+      // Windows 上 'dir' 型符号链接需要开发者模式/管理员权限，无权限时会被降级成普通目录，
+      // 使下面的断言失去意义。junction 是等价的目录链接，且普通用户即可创建。
+      const linkType = process.platform === 'win32' ? 'junction' : 'dir';
+      fs.symlinkSync(process.platform === 'win32' ? 'C:\\Windows\\System32' : '/etc', symlinkDir, linkType);
+      symlinkCreated = fs.lstatSync(symlinkDir).isSymbolicLink();
+      assert.equal(symlinkCreated, true, 'test setup must create a real directory link, otherwise REV-002 is not exercised');
     } catch {}
     if (symlinkCreated) {
       const targetThroughLink = path.join(symlinkDir, 'new-escape-file.txt');
@@ -616,5 +620,102 @@ test('REV-003, REV-004, REV-007, REV-008, REV-009, REV-010, REV-013, REV-014, RE
     assert.equal(fs.existsSync(path.join(tmpDir, 'stream.d')), false, 'GET /api/v1/stream must not create stream.d directory');
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('AG-PERF-01: long-running external commands must not block the Node event loop', async () => {
+  const { execFileAsync, runOrThrow } = await import('../lib/exec.js');
+
+  // 模拟一个耗时 1.2 秒的外部命令（等同 docker pull / apt-get / tar 备份的场景）
+  const slowCmd = process.platform === 'win32'
+    ? ['node', ['-e', 'setTimeout(() => {}, 1200)']]
+    : ['sleep', ['1.2']];
+
+  let ticks = 0;
+  const heartbeat = setInterval(() => { ticks += 1; }, 50);
+  const started = Date.now();
+  const res = await execFileAsync(slowCmd[0], slowCmd[1], { timeout: 15000 });
+  const elapsed = Date.now() - started;
+  clearInterval(heartbeat);
+
+  assert.equal(res.error, null, 'external command should run cleanly');
+  assert.equal(res.status, 0);
+  assert.ok(elapsed >= 1000, `command should really take ~1.2s, took ${elapsed}ms`);
+  // spawnSync 会把事件循环完全锁住，ticks 只可能是 0~1；异步执行时事件循环持续运转
+  assert.ok(
+    ticks >= 8,
+    `event loop must keep serving during a long external command (ticks=${ticks}, elapsed=${elapsed}ms)`
+  );
+});
+
+test('AG-PERF-01: runOrThrow surfaces missing binaries and non-zero exits as readable errors', async () => {
+  const { runOrThrow } = await import('../lib/exec.js');
+
+  await assert.rejects(
+    () => runOrThrow('armguard-definitely-not-a-real-binary', ['--version'], { timeout: 5000 }),
+    /系统未安装 armguard-definitely-not-a-real-binary/,
+    'missing binary must be reported as not installed'
+  );
+
+  const failing = process.platform === 'win32'
+    ? ['node', ['-e', 'console.error("boom"); process.exit(3)']]
+    : ['sh', ['-c', 'echo boom >&2; exit 3']];
+  await assert.rejects(
+    () => runOrThrow(failing[0], failing[1], { timeout: 5000 }),
+    /boom/,
+    'non-zero exit must include stderr detail'
+  );
+});
+
+test('AG-PERF-01: compress → decompress round-trip preserves file contents (async archive pipeline)', async () => {
+  const { handleFiles, isProtectedPath } = await import('../routes/files.js');
+  const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ag-arch-roundtrip-'));
+
+  async function callFiles(route, method, body) {
+    let resp;
+    const u = new URL('http://127.0.0.1' + route);
+    await handleFiles(
+      u.pathname,
+      { method, headers: {} },
+      { json: (data = null, message = 'ok', code = 0) => { resp = { code, message, data }; } },
+      u,
+      {
+        isProtectedPath,
+        parseBody: async () => body,
+        currentUser: () => 'opsadmin',
+        logOperation: () => {},
+      }
+    );
+    return resp;
+  }
+
+  try {
+    const srcDir = path.join(workDir, 'src');
+    fs.mkdirSync(path.join(srcDir, 'sub'), { recursive: true });
+    fs.writeFileSync(path.join(srcDir, 'a.txt'), 'hello-a', 'utf8');
+    fs.writeFileSync(path.join(srcDir, 'sub', 'b.txt'), 'hello-b', 'utf8');
+
+    const compressRes = await callFiles('/api/v1/files/compress', 'POST', {
+      paths: [srcDir],
+      target_name: 'bundle.tar.gz',
+      format: 'tar.gz',
+    });
+    assert.equal(compressRes.code, 0, `compress should succeed: ${compressRes.message}`);
+    const archive = path.join(workDir, 'bundle.tar.gz');
+    assert.equal(fs.existsSync(archive), true, 'archive must be written to disk');
+
+    const destDir = path.join(workDir, 'out');
+    const extractRes = await callFiles('/api/v1/files/decompress', 'POST', {
+      path: archive,
+      dest_path: destDir,
+      overwrite: false,
+    });
+    assert.equal(extractRes.code, 0, `decompress should succeed: ${extractRes.message}`);
+
+    const extracted = path.join(destDir, 'src', 'sub', 'b.txt');
+    assert.equal(fs.existsSync(extracted), true, 'nested file must be extracted');
+    assert.equal(fs.readFileSync(extracted, 'utf8'), 'hello-b', 'file contents must survive the round-trip');
+  } finally {
+    fs.rmSync(workDir, { recursive: true, force: true });
   }
 });

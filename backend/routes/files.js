@@ -1,6 +1,6 @@
 import fs from 'fs'
 import path from 'path'
-import { spawnSync } from 'child_process'
+import { execFileAsync, tarExec } from '../lib/exec.js'
 
 export const ALLOWED_SANDBOX_ROOTS = [
   '/www',
@@ -129,14 +129,29 @@ function resolveRealWithAncestors(resolvedPath) {
   return resolvedPath
 }
 
+// Windows 开发/调试环境下的系统禁写区。生产目标是 Linux，但 isProtectedPath 在 win32
+// 下也必须校验「解析后的真实路径」，否则经符号链接即可绕过（REV-002）。
+const WIN_FORBIDDEN_PREFIXES = [
+  'c:\\windows',
+  'c:\\program files',
+  'c:\\program files (x86)',
+  'c:\\programdata',
+  'c:\\system volume information',
+  'c:\\$recycle.bin'
+]
+
+function isWinForbidden(winPath) {
+  const lower = String(winPath).replace(/\//g, '\\').toLowerCase()
+  return WIN_FORBIDDEN_PREFIXES.some(p => lower === p || lower.startsWith(p + '\\'))
+}
+
 export function isProtectedPath(targetPath) {
   if (!targetPath || typeof targetPath !== 'string' || targetPath.includes('\0')) return true
   const resolved = path.resolve(targetPath)
   const posixPath = toPosix(resolved)
 
   if (process.platform === 'win32') {
-    const winLower = resolved.toLowerCase()
-    if (winLower.startsWith('c:\\windows') || winLower.startsWith('c:\\program files')) return true
+    if (isWinForbidden(resolved)) return true
     if (hasSensitiveSegment(posixPath)) return true
   }
 
@@ -148,6 +163,9 @@ export function isProtectedPath(targetPath) {
   // 2. Check resolved real path (including nearest existing ancestor for non-existent new targets)
   const realTarget = resolveRealWithAncestors(resolved)
   if (!realTarget) return true
+  if (process.platform === 'win32' && isWinForbidden(realTarget)) {
+    return true
+  }
   const realPosix = toPosix(realTarget)
   if (isPosixOutsideOrForbidden(realPosix)) {
     return true
@@ -708,9 +726,10 @@ export async function handleFiles(pathname, req, res, url, ctx) {
       // Prefix every operand with './' AND terminate options with '--' so filenames starting
       // with '-' (e.g. '--checkpoint=1') are never parsed as flags by tar or zip (REV-001).
       const safeOperands = fileNames.map(name => `./${name}`)
+      // 异步执行：大目录压缩可能持续数十秒，不能阻塞事件循环（AG-PERF-01）
       const child = format === 'zip'
-        ? spawnSync('zip', ['-r', targetPath, '--', ...safeOperands], { cwd: parentDir, encoding: 'utf-8', timeout: 120000 })
-        : spawnSync('tar', ['-czf', targetPath, '--', ...safeOperands], { cwd: parentDir, encoding: 'utf-8', timeout: 120000 })
+        ? await execFileAsync('zip', ['-r', targetPath, '--', ...safeOperands], { cwd: parentDir, timeout: 120000 })
+        : await tarExec(['-czf', targetPath, '--', ...safeOperands], { cwd: parentDir, timeout: 120000 })
       if (child.error || child.status !== 0) {
         const reason = child.error ? child.error.message : ((child.stderr || '').trim() || `退出码 ${child.status}`)
         throw new Error(`压缩失败: ${reason}`)
@@ -749,9 +768,11 @@ export async function handleFiles(pathname, req, res, url, ctx) {
 
       // Extract to an isolated staging directory first so we can inspect members (REV-011)
       stageDir = fs.mkdtempSync(path.join(destPath, '.ag_unpack_'))
+      // 用 cwd 指定解压目录而不是 tar 的 -C 参数：-C 在 Windows 上会因盘符/非 ASCII 路径
+      // 解析失败（"Cannot open: No such file or directory"），cwd 由 Node 处理更可靠。
       const child = archivePath.endsWith('.zip')
-        ? spawnSync('unzip', ['-q', archivePath, '-d', stageDir], { encoding: 'utf-8', timeout: 120000 })
-        : spawnSync('tar', ['--no-same-owner', '--no-same-permissions', '-xzf', archivePath, '-C', stageDir], { encoding: 'utf-8', timeout: 120000 })
+        ? await execFileAsync('unzip', ['-q', archivePath, '-d', stageDir], { timeout: 120000 })
+        : await tarExec(['--no-same-owner', '--no-same-permissions', '-xzf', archivePath], { cwd: stageDir, timeout: 120000 })
 
       if (child.error || child.status !== 0) {
         const reason = child.error ? child.error.message : ((child.stderr || '').trim() || `退出码 ${child.status}`)

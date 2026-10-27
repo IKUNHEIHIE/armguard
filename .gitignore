@@ -28,6 +28,9 @@ __pycache__/
 venv/
 ENV/
 
+# Local agent workspace (contains device access notes, never publish)
+.workbuddy-ai/
+
 # System & Editor Files
 .DS_Store
 Thumbs.db
