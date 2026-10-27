@@ -134,11 +134,16 @@
 不需要事先安装任何依赖。
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/IKUNHEIHIE/armguard/main/install.sh
+curl -fsSLO https://github.com/IKUNHEIHIE/armguard/releases/download/v0.2.0/install.sh
 sudo bash install.sh
 ```
 
+> 国内网络若访问 GitHub 缓慢，可在地址前加加速前缀：
+> `curl -fsSLO https://ghfast.top/https://github.com/IKUNHEIHIE/armguard/releases/download/v0.2.0/install.sh`
+
 安装完成后会直接打印访问地址与初始管理员密码。
+
+> 脚本不依赖 `curl`/`wget` 预装，也不要求事先装 Node.js —— 缺少时会自动补齐。
 
 **常用参数**
 

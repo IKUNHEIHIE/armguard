@@ -15,7 +15,7 @@ set -euo pipefail
 # 可调参数
 # ---------------------------------------------------------------------------
 REPO="IKUNHEIHIE/armguard"
-VERSION="${ARMGUARD_VERSION:-0.2.0}"
+RELEASE_VERSION="${ARMGUARD_VERSION:-0.2.0}"
 INSTALL_DIR="${ARMGUARD_DIR:-/opt/armguard}"
 DATA_DIR="${ARMGUARD_DATA_DIR:-/var/lib/armguard}"
 BACKUP_DIR="${ARMGUARD_BACKUP_DIR:-/var/backups/armguard}"
@@ -80,7 +80,7 @@ while [ $# -gt 0 ]; do
     --upgrade) ACTION="upgrade"; shift ;;
     --uninstall) ACTION="uninstall"; shift ;;
     --purge) PURGE=1; shift ;;
-    --version) VERSION="${2:-}"; shift 2 ;;
+    --version) RELEASE_VERSION="${2:-}"; shift 2 ;;
     --port) PORT="${2:-}"; shift 2 ;;
     --entrance) ENTRANCE="${2:-}"; shift 2 ;;
     --no-start) NO_START=1; shift ;;
@@ -114,6 +114,8 @@ detect_platform() {
   esac
 
   OS_ID=""; OS_CODENAME=""
+  # 注意：/etc/os-release 里也有 VERSION 变量，会覆盖同名变量，
+  # 所以本脚本的发行版本号统一用 RELEASE_VERSION。
   if [ -r /etc/os-release ]; then
     # shellcheck disable=SC1091
     . /etc/os-release
@@ -169,12 +171,12 @@ install_node() {
   tmpd="$(mktemp -d)"
   for base in "${NODE_MIRRORS[@]}"; do
     url="${base}/latest-v${NODE_MIN_MAJOR}.x/SHASUMS256.txt"
-    if curl -fsSL --max-time 20 "$url" -o "$tmpd/sha" 2>/dev/null; then
+    if fetch_quiet "$url" "$tmpd/sha" 20; then
       local file
       file="$(grep -o "node-v[0-9.]*-${NODE_ARCH}\.tar\.xz" "$tmpd/sha" | head -1)"
       [ -n "$file" ] || continue
       info "从 $base 下载 $file ..."
-      if curl -fL --max-time 300 "${base}/latest-v${NODE_MIN_MAJOR}.x/${file}" -o "$tmpd/node.tar.xz"; then
+      if fetch_to "${base}/latest-v${NODE_MIN_MAJOR}.x/${file}" "$tmpd/node.tar.xz" 300; then
         mkdir -p /usr/local/lib/nodejs
         tar -xJf "$tmpd/node.tar.xz" -C /usr/local/lib/nodejs
         local dir
@@ -198,24 +200,64 @@ install_node() {
 }
 
 # ---------------------------------------------------------------------------
+# 下载器（curl / wget 自适应）
+# ---------------------------------------------------------------------------
+FETCH=""
+
+detect_fetch() {
+  if command -v curl >/dev/null 2>&1; then FETCH="curl"; return 0; fi
+  if command -v wget >/dev/null 2>&1; then FETCH="wget"; return 0; fi
+  info "未检测到 curl / wget，尝试安装 curl ..."
+  if command -v apt-get >/dev/null 2>&1; then
+    apt-get update -qq || true
+    apt-get install -y curl >/dev/null 2>&1 || true
+  fi
+  if command -v curl >/dev/null 2>&1; then FETCH="curl"; return 0; fi
+  if command -v wget >/dev/null 2>&1; then FETCH="wget"; return 0; fi
+  die "缺少下载工具，请先安装：apt-get install -y curl"
+}
+
+# fetch_to <url> <目标文件> [超时秒]
+fetch_to() {
+  local url="$1" dest="$2" timeout="${3:-600}"
+  if [ "$FETCH" = "curl" ]; then
+    curl -fsSL --connect-timeout 15 --max-time "$timeout" "$url" -o "$dest"
+  else
+    wget -q -T "$timeout" -O "$dest" "$url"
+  fi
+}
+
+# fetch_quiet <url> <目标文件> [超时秒]，失败不打印噪声
+fetch_quiet() {
+  local url="$1" dest="$2" timeout="${3:-20}"
+  if [ "$FETCH" = "curl" ]; then
+    curl -fsSL --connect-timeout 10 --max-time "$timeout" "$url" -o "$dest" 2>/dev/null
+  else
+    wget -q -T "$timeout" -O "$dest" "$url" 2>/dev/null
+  fi
+}
+
+# ---------------------------------------------------------------------------
 # 下载发行包
 # ---------------------------------------------------------------------------
 download_release() {
-  local tarball="armguard-panel-v${VERSION}.tar.gz"
+  local tarball="armguard-panel-v${RELEASE_VERSION}.tar.gz"
   local tmpd="$1"
   local mirror base url
   for mirror in "${GITHUB_MIRRORS[@]}"; do
-    base="https://github.com/${REPO}/releases/download/v${VERSION}"
+    base="https://github.com/${REPO}/releases/download/v${RELEASE_VERSION}"
     url="${mirror}${base}/${tarball}"
-    info "下载 ${url}"
-    if curl -fL --max-time 600 "$url" -o "$tmpd/$tarball" 2>/dev/null; then
+    # 注意：本函数的标准输出只允许出现最终文件路径（调用方用 $(...) 捕获），
+    # 所有日志必须写到 stderr，否则会污染返回值。
+    info "下载 ${url}" >&2
+    if fetch_to "$url" "$tmpd/$tarball" 600; then
       if tar -tzf "$tmpd/$tarball" >/dev/null 2>&1; then
-        echo "$tmpd/$tarball"
+        printf '%s\n' "$tmpd/$tarball"
         return 0
       fi
-      warn "下载的文件不是有效压缩包，尝试下一个源"
+      warn "下载的文件不是有效压缩包，尝试下一个源" >&2
     else
-      warn "该源下载失败，尝试下一个源"
+      warn "该源下载失败，尝试下一个源" >&2
     fi
   done
   return 1
@@ -264,9 +306,10 @@ do_install() {
   local mode="$1"
   local tmpd
   tmpd="$(mktemp -d)"
-  trap 'rm -rf "$tmpd"' EXIT
+  WORK_TMPDIR="$tmpd"
+  trap 'rm -rf "${WORK_TMPDIR:-}"' EXIT
 
-  step "下载 ArmGuard v${VERSION} 发行包"
+  step "下载 ArmGuard v${RELEASE_VERSION} 发行包"
   local pkg
   pkg="$(download_release "$tmpd")" || die "下载失败。请检查网络，或手动从 https://github.com/${REPO}/releases 下载后解压到 ${INSTALL_DIR}"
 
@@ -340,7 +383,7 @@ do_install() {
   [ -f "$pwfile" ] && pw="$(grep -o 'password=.*' "$pwfile" 2>/dev/null | cut -d= -f2-)"
 
   printf "\n"
-  ok "ArmGuard v${VERSION} 已安装并启动"
+  ok "ArmGuard v${RELEASE_VERSION} 已安装并启动"
   cat <<EOF
 
   ${C_BOLD}访问地址${C_RESET}: http://${ip}:${PORT}${ENTRANCE}
@@ -392,6 +435,7 @@ main() {
   printf "\n${C_BOLD}ArmGuard 安装程序${C_RESET}（https://github.com/%s）\n" "$REPO"
   require_root
   detect_platform
+  detect_fetch
 
   case "$ACTION" in
     install)
