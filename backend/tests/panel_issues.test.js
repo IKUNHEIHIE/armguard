@@ -845,6 +845,25 @@ test('TOOLBOX: DNS/hosts/mirrors 校验、备份与路径白名单（不触碰�
     const tzBad = await call('/api/v1/toolbox/timezone', 'PUT', { timezone: '../../etc/passwd' });
     assert.equal(tzBad.resp.code, 400);
 
+    // --- 备份裁剪：连续写入 7 次后只保留 5 份，且最早那份（用户原始配置）必须保留 ---
+    // 最早的一份备份对应「第一次经 API 修改之前」的内容，即测试开始时写入的初始内容
+    const preWriteContent = '127.0.0.1 localhost\n::1 localhost ip6-localhost\n';
+    for (let i = 0; i < 7; i += 1) {
+      const r = await call('/api/v1/toolbox/hosts', 'PUT', { content: `127.0.0.1 localhost\n10.0.0.${i} host${i}\n` });
+      assert.equal(r.resp.code, 0);
+      await new Promise((res) => setTimeout(res, 3));
+    }
+    const hostBackups = fs
+      .readdirSync(work)
+      .filter(n => n.startsWith('hosts.armguard-bak-'))
+      .sort();
+    assert.equal(hostBackups.length, 5, `备份应裁剪到 5 份，实际 ${hostBackups.length}`);
+    assert.equal(
+      fs.readFileSync(path.join(work, hostBackups[0]), 'utf8'),
+      preWriteContent,
+      '最早的一份备份必须是改动前的原始配置，不能被裁剪掉'
+    );
+
     // --- 非工具箱路径必须放行给后续路由 ---
     const other = await call('/api/v1/system/info', 'GET');
     assert.equal(other.handled, false);

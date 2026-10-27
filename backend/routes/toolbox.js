@@ -119,12 +119,17 @@ function pruneBackups(file) {
       .filter(n => n.startsWith(prefix))
       .map(n => path.join(dir, n))
       .sort()
-    while (items.length > BACKUP_KEEP) {
-      const old = items.shift()
+    if (items.length <= BACKUP_KEEP) return
+    // 最早的一份永远是「改动前的原始配置」，必须保留——真机测试中发现，
+    // 连续切换几次源后按数量裁剪会把用户最初的文件删掉，回滚时无据可依。
+    const [oldest, ...rest] = items
+    const excess = items.length - BACKUP_KEEP
+    for (let i = 0; i < excess; i += 1) {
       try {
-        fs.unlinkSync(old)
+        fs.unlinkSync(rest[i])
       } catch {}
     }
+    void oldest
   } catch {}
 }
 
