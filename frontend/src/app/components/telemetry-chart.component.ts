@@ -21,22 +21,22 @@ import { ThemeService } from '../core/theme.service'
   template: `
     <div class="m3-card chart-card">
       <div class="chart-header">
-        <div>
-          <div class="chart-title">
-            <mat-icon class="title-icon" aria-hidden="true">timeline</mat-icon>
-            <span>实时资源趋势</span>
-            <span class="m3-badge" [ngClass]="system.connectionBadgeClass()">
-              {{ system.connectionBadgeLabel() }}
-            </span>
-            <span *ngIf="system.isStale()" class="m3-badge danger">
-              ⚠ 数据已过期
-            </span>
-          </div>
-          <div class="chart-subtitle font-mono">
-            <span>最后采集: {{ system.lastUpdatedLabel() }}</span>
-            <span> · 采样周期: {{ system.pollIntervalMs() }}ms</span>
-            <span> · 窗口: 最近 {{ windowSeconds() }}s ({{ history().length }} 点)</span>
-            <span *ngIf="system.monitorPolicy()?.eco_mode_active"> · Eco 节能已启用</span>
+        <div class="title-wrap">
+          <span class="title-icon" aria-hidden="true"><mat-icon>timeline</mat-icon></span>
+          <div>
+            <div class="chart-title">
+              <span>实时资源趋势</span>
+              <span class="m3-badge" [ngClass]="system.connectionBadgeClass()">
+                {{ system.connectionBadgeLabel() }}
+              </span>
+              <span *ngIf="system.isStale()" class="m3-badge danger">数据已过期</span>
+            </div>
+            <div class="chart-subtitle font-mono">
+              <span>最后采集 {{ system.lastUpdatedLabel() }}</span>
+              <span> · 采样 {{ system.pollIntervalMs() }}ms</span>
+              <span> · 窗口 {{ windowSeconds() }}s ({{ history().length }} 点)</span>
+              <span *ngIf="system.monitorPolicy()?.eco_mode_active"> · Eco 节能中</span>
+            </div>
           </div>
         </div>
 
@@ -45,8 +45,6 @@ import { ThemeService } from '../core/theme.service'
             *ngIf="system.isStale() || system.connectionState() === 'offline'"
             type="button"
             mat-stroked-button
-            color="warn"
-            aria-label="立即重新连接实时监控"
             (click)="system.reconnectNow()"
           >
             <mat-icon>sync</mat-icon>
@@ -59,8 +57,8 @@ import { ThemeService } from '../core/theme.service'
             aria-label="切换监控指标视图"
             class="mode-toggle"
           >
-            <mat-button-toggle value="load">CPU 与内存 (%)</mat-button-toggle>
-            <mat-button-toggle value="network">网络吞吐 (KB/s)</mat-button-toggle>
+            <mat-button-toggle value="load">CPU 与内存</mat-button-toggle>
+            <mat-button-toggle value="network">网络吞吐</mat-button-toggle>
           </mat-button-toggle-group>
         </div>
       </div>
@@ -93,7 +91,7 @@ import { ThemeService } from '../core/theme.service'
         display: flex;
         flex-direction: column;
         gap: 12px;
-        padding: 16px 20px;
+        padding: 20px !important;
       }
       .chart-header {
         display: flex;
@@ -102,22 +100,41 @@ import { ThemeService } from '../core/theme.service'
         justify-content: space-between;
         gap: 12px;
       }
+      .title-wrap {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .title-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 30px;
+        height: 30px;
+        flex-shrink: 0;
+        border-radius: var(--ag-radius-sm);
+        background: var(--ag-surface-low);
+        color: var(--ag-primary);
+      }
+      .title-icon mat-icon {
+        font-size: 18px;
+        width: 18px;
+        height: 18px;
+      }
       .chart-title {
         display: flex;
         flex-wrap: wrap;
         align-items: center;
         gap: 8px;
         font-family: var(--ag-font-display);
-        font-weight: 700;
-        font-size: 0.96rem;
-      }
-      .title-icon {
-        color: var(--ag-primary);
+        font-size: 0.9375rem;
+        font-weight: 600;
+        color: var(--ag-on-surface);
       }
       .chart-subtitle {
-        font-size: 0.73rem;
+        font-size: 0.6875rem;
         color: var(--ag-on-surface-variant);
-        margin-top: 3px;
+        margin-top: 2px;
       }
       .chart-controls {
         display: flex;
@@ -129,10 +146,10 @@ import { ThemeService } from '../core/theme.service'
         display: flex;
         flex-wrap: wrap;
         gap: 18px;
-        padding: 6px 12px;
-        border-radius: 10px;
-        background: var(--ag-surface);
-        font-size: 0.74rem;
+        padding: 8px 12px;
+        border-radius: var(--ag-radius-sm);
+        background: var(--ag-surface-low);
+        font-size: 0.6875rem;
         color: var(--ag-on-surface-variant);
       }
       .chart-a11y-summary strong {
@@ -232,14 +249,16 @@ export class TelemetryChartComponent implements AfterViewInit, OnDestroy {
     const isLoad = mode === 'load'
     const isDark = themeMode === 'dark'
 
-    const primaryColor = isDark ? '#a8c7fa' : '#0b57d0'
-    const successColor = isDark ? '#6dd58c' : '#146c2e'
-    const textMuted = isDark ? '#94a3b8' : '#444746'
-    const tooltipBg = isDark ? '#18202c' : '#ffffff'
-    const tooltipText = isDark ? '#e2e8f0' : '#1f1f1f'
-    const tooltipBorder = isDark ? 'rgba(168, 199, 250, 0.25)' : 'rgba(11, 87, 208, 0.22)'
-    const splitLineColor = isDark ? 'rgba(148, 163, 184, 0.14)' : 'rgba(68, 71, 70, 0.15)'
-    const axisLineColor = isDark ? 'rgba(148, 163, 184, 0.22)' : 'rgba(68, 71, 70, 0.25)'
+    const primaryColor = isDark ? '#a8c7fa' : '#1a73e8'
+    const secondaryColor = isDark ? '#4dd0e1' : '#12b5cb'
+    const textMuted = isDark ? '#a9b0bd' : '#414754'
+    const tooltipBg = isDark ? '#24272c' : '#ffffff'
+    const tooltipText = isDark ? '#e3e6eb' : '#181c20'
+    const tooltipBorder = isDark ? 'rgba(168, 199, 250, 0.28)' : '#dadce0'
+    const splitLineColor = isDark ? 'rgba(255, 255, 255, 0.08)' : '#e8eaed'
+    const axisLineColor = isDark ? 'rgba(255, 255, 255, 0.16)' : '#dfe3e8'
+    const primaryArea = isDark ? 'rgba(168, 199, 250, 0.3)' : 'rgba(26, 115, 232, 0.18)'
+    const secondaryArea = isDark ? 'rgba(77, 208, 225, 0.28)' : 'rgba(18, 181, 203, 0.16)'
 
     const option: echarts.EChartsOption = {
       animation: false,
@@ -282,12 +301,12 @@ export class TelemetryChartComponent implements AfterViewInit, OnDestroy {
               smooth: 0.35,
               showSymbol: false,
               data: pts.map((p) => p.cpu),
-              lineStyle: { width: 2.4, color: primaryColor },
+              lineStyle: { width: 2, color: primaryColor },
               itemStyle: { color: primaryColor },
               areaStyle: {
                 color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-                  { offset: 0, color: isDark ? 'rgba(168, 199, 250, 0.32)' : 'rgba(11, 87, 208, 0.22)' },
-                  { offset: 1, color: 'rgba(168, 199, 250, 0.01)' },
+                  { offset: 0, color: primaryArea },
+                  { offset: 1, color: 'rgba(26, 115, 232, 0.01)' },
                 ]),
               },
             },
@@ -297,12 +316,12 @@ export class TelemetryChartComponent implements AfterViewInit, OnDestroy {
               smooth: 0.35,
               showSymbol: false,
               data: pts.map((p) => p.mem),
-              lineStyle: { width: 2.2, color: successColor },
-              itemStyle: { color: successColor },
+              lineStyle: { width: 2, color: secondaryColor },
+              itemStyle: { color: secondaryColor },
               areaStyle: {
                 color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-                  { offset: 0, color: isDark ? 'rgba(109, 213, 140, 0.26)' : 'rgba(20, 108, 46, 0.18)' },
-                  { offset: 1, color: 'rgba(109, 213, 140, 0.01)' },
+                  { offset: 0, color: secondaryArea },
+                  { offset: 1, color: 'rgba(18, 181, 203, 0.01)' },
                 ]),
               },
             },
@@ -314,12 +333,12 @@ export class TelemetryChartComponent implements AfterViewInit, OnDestroy {
               smooth: 0.35,
               showSymbol: false,
               data: pts.map((p) => p.rxKb),
-              lineStyle: { width: 2.4, color: successColor },
-              itemStyle: { color: successColor },
+              lineStyle: { width: 2, color: secondaryColor },
+              itemStyle: { color: secondaryColor },
               areaStyle: {
                 color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-                  { offset: 0, color: isDark ? 'rgba(109, 213, 140, 0.32)' : 'rgba(20, 108, 46, 0.22)' },
-                  { offset: 1, color: 'rgba(109, 213, 140, 0.01)' },
+                  { offset: 0, color: secondaryArea },
+                  { offset: 1, color: 'rgba(18, 181, 203, 0.01)' },
                 ]),
               },
             },
@@ -329,12 +348,12 @@ export class TelemetryChartComponent implements AfterViewInit, OnDestroy {
               smooth: 0.35,
               showSymbol: false,
               data: pts.map((p) => p.txKb),
-              lineStyle: { width: 2.2, color: primaryColor },
+              lineStyle: { width: 2, color: primaryColor },
               itemStyle: { color: primaryColor },
               areaStyle: {
                 color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-                  { offset: 0, color: isDark ? 'rgba(168, 199, 250, 0.28)' : 'rgba(11, 87, 208, 0.18)' },
-                  { offset: 1, color: 'rgba(168, 199, 250, 0.01)' },
+                  { offset: 0, color: primaryArea },
+                  { offset: 1, color: 'rgba(26, 115, 232, 0.01)' },
                 ]),
               },
             },

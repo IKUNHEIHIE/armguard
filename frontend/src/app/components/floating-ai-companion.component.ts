@@ -216,9 +216,9 @@ import { copyToClipboard } from '@/utils/clipboard'
         right: 20px;
         bottom: 20px;
         z-index: 900;
-        border-radius: 18px !important;
-        background: var(--ag-primary-container) !important;
-        color: var(--ag-on-primary-container) !important;
+        border-radius: 16px !important;
+        background: var(--ag-primary-solid) !important;
+        color: var(--ag-on-primary) !important;
         box-shadow: 0 10px 28px rgba(0, 0, 0, 0.38) !important;
       }
       .m3-ai-sheet {
@@ -232,8 +232,8 @@ import { copyToClipboard } from '@/utils/clipboard'
         z-index: 901;
         background: var(--ag-surface-low);
         border: 1px solid var(--ag-outline-variant);
-        border-radius: 28px;
-        box-shadow: 0 24px 48px rgba(0, 0, 0, 0.5);
+        border-radius: 20px;
+        box-shadow: var(--ag-shadow-3);
         display: flex;
         flex-direction: column;
         overflow: hidden;

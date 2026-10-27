@@ -1,97 +1,234 @@
 @use '@angular/material' as mat;
 @import '@xterm/xterm/css/xterm.css';
 
+/* ============================================================================
+   ArmGuard Infrastructure System — Material Design 3
+   ----------------------------------------------------------------------------
+   严格对齐设计稿（stitch: ArmGuard Material 3 Redesign）：
+
+   · 角色化色彩令牌：Google Blue #1A73E8 主色，Cyan #12B5CB 硬件强调色，
+     绿 #188038 / 琥珀 #F29900 / 红 #D93025 仅用于诊断状态
+   · 层级靠色调分层 + 1px 描边表达，而非重投影
+     Level0 画布 #F7F9FF → Level1 卡片 #FFFFFF + #DADCE0 → Level3 抽屉/弹窗 + 阴影
+   · 形状：卡片 16px、控件 8px、状态芯片 9999px
+   · 字体：Roboto Flex（标题）/ Noto Sans（正文）/ JetBrains Mono（遥测数字）
+   · 8px 节奏栅格，遥测数字统一 tabular-nums，避免轮询时抖动
+
+   类名沿用 .m3-* 前缀（14 个页面共用），视觉已按设计稿重写。
+   ========================================================================== */
+
 html {
+  color-scheme: light;
+
+  /* ---- 字体 ---- */
+  --ag-font-display: 'Roboto Flex', 'Roboto', 'Noto Sans', -apple-system, BlinkMacSystemFont,
+    'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --ag-font-sans: 'Noto Sans', 'Roboto Flex', -apple-system, BlinkMacSystemFont, 'Segoe UI',
+    'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  --ag-font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas,
+    'Liberation Mono', monospace;
+
+  /* ---- 表面层级（Level 0 → Level 3） ---- */
+  --ag-bg: #f7f9ff;
+  --ag-surface-lowest: #ffffff;
+  --ag-surface-low: #f1f4fa;
+  --ag-surface: #ebeef4;
+  --ag-surface-high: #e5e8ee;
+  --ag-surface-highest: #dfe3e8;
+
+  --ag-on-surface: #181c20;
+  --ag-on-surface-variant: #414754;
+  --ag-outline: #c1c6d6;
+  --ag-outline-variant: #e0e2e6;
+  --ag-outline-strong: #dadce0;
+
+  /* ---- 主色（Google Blue） ---- */
+  --ag-primary: #1a73e8;
+  --ag-primary-solid: #1a73e8;
+  --ag-on-primary: #ffffff;
+  --ag-primary-container: #d2e3fc;
+  --ag-on-primary-container: #041e49;
+  --ag-primary-hover: rgba(26, 115, 232, 0.06);
+
+  /* ---- 次色（硬件 / ARM 强调，Cyan） ---- */
+  --ag-secondary: #12b5cb;
+  --ag-secondary-container: #cef5f9;
+  --ag-on-secondary-container: #00363d;
+
+  /* ---- 诊断状态色 ---- */
+  --ag-success: #188038;
+  --ag-on-success: #ffffff;
+  --ag-success-container: #ceead6;
+  --ag-warning: #f29900;
+  --ag-warning-container: #fef7e0;
+  --ag-on-warning-container: #593e00;
+  --ag-danger: #d93025;
+  --ag-on-danger: #ffffff;
+  --ag-danger-container: #fce8e6;
+
+  /* ---- 图表 ---- */
+  --ag-chart-1: #1a73e8;
+  --ag-chart-2: #12b5cb;
+  --ag-chart-3: #f29900;
+  --ag-chart-grid: #e8eaed;
+
+  /* ---- 形状 ---- */
+  --ag-radius-xs: 4px;
+  --ag-radius-sm: 8px;
+  --ag-radius-md: 12px;
+  --ag-radius-lg: 16px;
+  --ag-radius-xl: 24px;
+  --ag-radius-pill: 9999px;
+
+  /* ---- 阴影（仅在 Level 2 / Level 3 出现） ---- */
+  --ag-shadow-1: 0 1px 2px rgba(60, 64, 67, 0.08), 0 1px 3px rgba(60, 64, 67, 0.12);
+  --ag-shadow-2: 0 4px 12px rgba(60, 64, 67, 0.15);
+  --ag-shadow-3: 0 8px 28px rgba(60, 64, 67, 0.18);
+  --ag-sheen: none;
+
+  @include mat.theme(
+    (
+      color: (
+        theme-type: light,
+        primary: mat.$azure-palette,
+        tertiary: mat.$cyan-palette,
+      ),
+      typography: Roboto,
+      density: 0,
+    )
+  );
+
+  /* 把 Material 系统色接回设计稿令牌 */
+  --mat-sys-primary: var(--ag-primary-solid);
+  --mat-sys-on-primary: var(--ag-on-primary);
+  --mat-sys-primary-container: var(--ag-primary-container);
+  --mat-sys-on-primary-container: var(--ag-on-primary-container);
+  --mat-sys-secondary: var(--ag-secondary);
+  --mat-sys-secondary-container: var(--ag-secondary-container);
+  --mat-sys-on-secondary-container: var(--ag-on-secondary-container);
+  --mat-sys-tertiary: var(--ag-secondary);
+  --mat-sys-surface: var(--ag-surface-lowest);
+  --mat-sys-on-surface: var(--ag-on-surface);
+  --mat-sys-surface-variant: var(--ag-surface-low);
+  --mat-sys-on-surface-variant: var(--ag-on-surface-variant);
+  --mat-sys-surface-container-lowest: var(--ag-surface-lowest);
+  --mat-sys-surface-container-low: var(--ag-surface-low);
+  --mat-sys-surface-container: var(--ag-surface);
+  --mat-sys-surface-container-high: var(--ag-surface-high);
+  --mat-sys-surface-container-highest: var(--ag-surface-highest);
+  --mat-sys-outline: var(--ag-outline);
+  --mat-sys-outline-variant: var(--ag-outline-variant);
+  --mat-sys-error: var(--ag-danger);
+  --mat-sys-on-error: var(--ag-on-danger);
+  --mat-sys-error-container: var(--ag-danger-container);
+  --mat-sys-on-error-container: #5c0600;
+  --mat-sys-inverse-surface: #2d3135;
+  --mat-sys-inverse-on-surface: #eef1f7;
+}
+
+/* ---- MD3 深色变体（设计稿的深浅切换） ---- */
+html.dark-theme {
   color-scheme: dark;
 
-  --ag-font-display: 'Plus Jakarta Sans', 'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  --ag-font-sans: 'Roboto', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif;
-  --ag-font-mono: 'JetBrains Mono', 'Roboto Mono', ui-monospace, SFMono-Regular, Consolas, monospace;
+  --ag-bg: #111318;
+  --ag-surface-lowest: #191c20;
+  --ag-surface-low: #1e2126;
+  --ag-surface: #24272c;
+  --ag-surface-high: #2b2f35;
+  --ag-surface-highest: #33373e;
 
-  /* Google M3 Dark Surface Tokens (Default) */
-  --ag-bg: #0e131a;
-  --ag-surface-lowest: #090d12;
-  --ag-surface-low: #141b24;
-  --ag-surface: #18202c;
-  --ag-surface-high: #1f2937;
-  --ag-surface-highest: #283547;
-  --ag-on-surface: #e2e8f0;
-  --ag-on-surface-variant: #94a3b8;
-  --ag-outline: #334155;
-  --ag-outline-variant: rgba(148, 163, 184, 0.16);
+  --ag-on-surface: #e3e6eb;
+  --ag-on-surface-variant: #a9b0bd;
+  --ag-outline: #4a4f5a;
+  --ag-outline-variant: #2e323a;
+  --ag-outline-strong: #3d424b;
 
   --ag-primary: #a8c7fa;
+  --ag-primary-solid: #8ab4f8;
   --ag-on-primary: #062e6f;
   --ag-primary-container: #0842a0;
   --ag-on-primary-container: #d3e3fd;
+  --ag-primary-hover: rgba(168, 199, 250, 0.08);
 
-  --ag-secondary-container: #1b3a5c;
-  --ag-on-secondary-container: #cfe5ff;
+  --ag-secondary: #4dd0e1;
+  --ag-secondary-container: #004e59;
+  --ag-on-secondary-container: #9fefff;
 
   --ag-success: #6dd58c;
   --ag-on-success: #0a3818;
-  --ag-success-container: rgba(109, 213, 140, 0.14);
+  --ag-success-container: rgba(109, 213, 140, 0.16);
+  --ag-warning: #fdd663;
+  --ag-warning-container: rgba(253, 214, 99, 0.16);
+  --ag-on-warning-container: #fdd663;
+  --ag-danger: #f28b82;
+  --ag-on-danger: #5c0600;
+  --ag-danger-container: rgba(242, 139, 130, 0.16);
 
-  --ag-warning: #ffbb29;
-  --ag-warning-container: rgba(255, 187, 41, 0.14);
+  --ag-chart-1: #a8c7fa;
+  --ag-chart-2: #4dd0e1;
+  --ag-chart-3: #fdd663;
+  --ag-chart-grid: rgba(255, 255, 255, 0.08);
 
-  --ag-danger: #ffb4ab;
-  --ag-danger-container: rgba(255, 180, 171, 0.14);
+  --ag-shadow-1: 0 1px 3px rgba(0, 0, 0, 0.4);
+  --ag-shadow-2: 0 4px 12px rgba(0, 0, 0, 0.45);
+  --ag-shadow-3: 0 8px 28px rgba(0, 0, 0, 0.55);
 
-  @include mat.theme((
-    color: (
-      theme-type: dark,
-      primary: mat.$azure-palette,
-      tertiary: mat.$cyan-palette,
-    ),
-    typography: Roboto,
-    density: 0,
-  ));
+  @include mat.theme(
+    (
+      color: (
+        theme-type: dark,
+        primary: mat.$azure-palette,
+        tertiary: mat.$cyan-palette,
+      ),
+      typography: Roboto,
+      density: 0,
+    )
+  );
+
+  --mat-sys-primary: var(--ag-primary-solid);
+  --mat-sys-on-primary: var(--ag-on-primary);
+  --mat-sys-primary-container: var(--ag-primary-container);
+  --mat-sys-on-primary-container: var(--ag-on-primary-container);
+  --mat-sys-secondary: var(--ag-secondary);
+  --mat-sys-secondary-container: var(--ag-secondary-container);
+  --mat-sys-on-secondary-container: var(--ag-on-secondary-container);
+  --mat-sys-tertiary: var(--ag-secondary);
+  --mat-sys-surface: var(--ag-surface-lowest);
+  --mat-sys-on-surface: var(--ag-on-surface);
+  --mat-sys-surface-variant: var(--ag-surface-low);
+  --mat-sys-on-surface-variant: var(--ag-on-surface-variant);
+  --mat-sys-surface-container-lowest: var(--ag-surface-lowest);
+  --mat-sys-surface-container-low: var(--ag-surface-low);
+  --mat-sys-surface-container: var(--ag-surface);
+  --mat-sys-surface-container-high: var(--ag-surface-high);
+  --mat-sys-surface-container-highest: var(--ag-surface-highest);
+  --mat-sys-outline: var(--ag-outline);
+  --mat-sys-outline-variant: var(--ag-outline-variant);
+  --mat-sys-error: var(--ag-danger);
+  --mat-sys-on-error: var(--ag-on-danger);
+  --mat-sys-error-container: var(--ag-danger-container);
+  --mat-sys-on-error-container: #ffdad6;
+  --mat-sys-inverse-surface: #e3e6eb;
+  --mat-sys-inverse-on-surface: #191c20;
 }
 
-html.light-theme {
-  color-scheme: light;
-
-  --ag-bg: #f6f8fc;
-  --ag-surface-lowest: #ffffff;
-  --ag-surface-low: #f0f4f9;
-  --ag-surface: #e9eef6;
-  --ag-surface-high: #dde3ea;
-  --ag-surface-highest: #d3dbe5;
-  --ag-on-surface: #1f1f1f;
-  --ag-on-surface-variant: #444746;
-  --ag-outline: #747775;
-  --ag-outline-variant: rgba(68, 71, 70, 0.16);
-
-  --ag-primary: #0b57d0;
-  --ag-on-primary: #ffffff;
-  --ag-primary-container: #d3e3fd;
-  --ag-on-primary-container: #041e49;
-
-  --ag-secondary-container: #c2e7ff;
-  --ag-on-secondary-container: #001d35;
-
-  --ag-success: #146c2e;
-  --ag-on-success: #ffffff;
-  --ag-success-container: #c4eed0;
-
-  --ag-warning: #b06000;
-  --ag-warning-container: #ffdf9e;
-
-  --ag-danger: #b3261e;
-  --ag-danger-container: #f9dedc;
-
-  @include mat.theme((
-    color: (
-      theme-type: light,
-      primary: mat.$azure-palette,
-      tertiary: mat.$cyan-palette,
-    ),
-    typography: Roboto,
-    density: 0,
-  ));
+/* Material 组件的字号跟随设计稿排版层级 */
+html {
+  --mat-sys-body-large: 400 1rem / 1.5 var(--ag-font-sans);
+  --mat-sys-body-medium: 400 0.875rem / 1.45 var(--ag-font-sans);
+  --mat-sys-body-small: 400 0.75rem / 1.4 var(--ag-font-sans);
+  --mat-sys-label-large: 500 0.875rem / 1.2 var(--ag-font-sans);
+  --mat-sys-label-medium: 500 0.75rem / 1.2 var(--ag-font-sans);
+  --mat-sys-label-small: 500 0.6875rem / 1.2 var(--ag-font-sans);
+  --mat-sys-title-large: 600 1.125rem / 1.4 var(--ag-font-display);
+  --mat-sys-title-medium: 600 0.9375rem / 1.4 var(--ag-font-sans);
+  --mat-sys-title-small: 600 0.8125rem / 1.4 var(--ag-font-sans);
+  --mat-sys-headline-small: 600 1.25rem / 1.35 var(--ag-font-display);
 }
 
+/* ==========================================================================
+   基础
+   ========================================================================== */
 *,
 *::before,
 *::after {
@@ -105,45 +242,91 @@ body {
   background-color: var(--ag-bg);
   color: var(--ag-on-surface);
   font-family: var(--ag-font-sans);
+  font-size: 14px;
+  line-height: 20px;
+  letter-spacing: 0.25px;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  overflow: hidden;
+}
+
+::selection {
+  background: var(--ag-primary-container);
+  color: var(--ag-on-primary-container);
 }
 
 .font-mono,
 code,
-pre {
+pre,
+kbd,
+samp {
   font-family: var(--ag-font-mono) !important;
   font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
 }
 
 .font-display {
   font-family: var(--ag-font-display);
 }
 
-/* Custom M3 Scrollbar */
+h1,
+h2,
+h3,
+h4,
+h5 {
+  letter-spacing: -0.1px;
+}
+
+a {
+  color: var(--ag-primary);
+  text-decoration: none;
+}
+
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--ag-primary);
+  outline-offset: 2px;
+}
+
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 10px;
+  height: 10px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--ag-outline);
+  background: #c9cedb;
+  border: 3px solid transparent;
   border-radius: 999px;
+  background-clip: content-box;
+}
+html.dark-theme ::-webkit-scrollbar-thumb {
+  background: #4a4f5a;
+  background-clip: content-box;
 }
 
 /* ==========================================================================
-   Material Design 3 Surface & Layout Primitives
+   页面骨架
    ========================================================================== */
 .m3-page {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 16px;
   padding-bottom: 32px;
-  animation: m3FadeIn 180ms cubic-bezier(0.2, 0, 0, 1);
+  animation: agPageIn 200ms cubic-bezier(0.2, 0, 0, 1);
 }
 
-@keyframes m3FadeIn {
+@keyframes agPageIn {
   from {
     opacity: 0;
     transform: translateY(4px);
@@ -157,29 +340,29 @@ pre {
 .m3-page-header {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  gap: 16px;
-  padding: 20px 24px;
-  border-radius: 24px;
-  background: var(--ag-surface-low);
-  border: 1px solid var(--ag-outline-variant);
+  gap: 12px 24px;
+  padding: 4px 0;
 
   .m3-page-title {
     margin: 0;
-    font-family: var(--ag-font-display);
-    font-size: 1.35rem;
-    font-weight: 700;
-    letter-spacing: -0.01em;
-    color: var(--ag-on-surface);
     display: flex;
     align-items: center;
     gap: 10px;
+    font-family: var(--ag-font-display);
+    font-size: 1.75rem;
+    line-height: 2.25rem;
+    font-weight: 600;
+    letter-spacing: -0.2px;
+    color: var(--ag-on-surface);
   }
 
   .m3-page-subtitle {
-    margin: 4px 0 0;
-    font-size: 0.82rem;
+    margin: 6px 0 0;
+    max-width: 92ch;
+    font-size: 0.875rem;
+    line-height: 1.5;
     color: var(--ag-on-surface-variant);
   }
 
@@ -187,79 +370,53 @@ pre {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
+    padding-top: 2px;
   }
 }
 
-.m3-card {
-  background: var(--ag-surface-low) !important;
-  border: 1px solid var(--ag-outline-variant) !important;
-  border-radius: 20px !important;
-  padding: 20px;
-  color: var(--ag-on-surface);
-  box-shadow: none !important;
-  transition: border-color 150ms cubic-bezier(0.2, 0, 0, 1), background-color 150ms cubic-bezier(0.2, 0, 0, 1);
-
-  &:hover {
-    border-color: rgba(168, 199, 250, 0.28) !important;
+@media (max-width: 900px) {
+  .m3-page-header .m3-page-title {
+    font-size: 1.375rem;
+    line-height: 1.85rem;
   }
 }
 
-.m3-tonal-card {
-  background: var(--ag-surface) !important;
-  border: 1px solid var(--ag-outline-variant) !important;
-  border-radius: 18px !important;
-  padding: 16px;
-}
-
-.m3-hero-banner {
-  background: linear-gradient(135deg, var(--ag-surface-low) 0%, var(--ag-surface) 65%, rgba(8, 66, 160, 0.25) 100%);
-  border: 1px solid var(--ag-outline-variant);
-  border-radius: 24px;
-  padding: 22px 24px;
-}
-
-.m3-grid-4 {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 14px;
-}
-
-.m3-grid-3 {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 14px;
-}
-
+/* 网格 */
+.m3-grid-4,
+.m3-grid-3,
 .m3-grid-2 {
   display: grid;
+  gap: 16px;
+}
+.m3-grid-4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.m3-grid-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.m3-grid-2 {
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
 }
 
-@container (max-width: 920px) {
+@container (max-width: 1180px) {
   .m3-grid-4 {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-  .m3-grid-3 {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
 }
-
-@container (max-width: 720px) {
-  .m3-grid-2,
-  .m3-grid-3 {
+@container (max-width: 860px) {
+  .m3-grid-3,
+  .m3-grid-2 {
     grid-template-columns: 1fr;
   }
 }
-
-@container (max-width: 520px) {
+@container (max-width: 560px) {
   .m3-grid-4 {
     grid-template-columns: 1fr;
   }
 }
 
-@media (max-width: 1180px) {
+@media (max-width: 1280px) {
   .m3-grid-4 {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -267,8 +424,7 @@ pre {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
-
-@media (max-width: 768px) {
+@media (max-width: 860px) {
   .m3-grid-2,
   .m3-grid-3,
   .m3-grid-4 {
@@ -276,18 +432,70 @@ pre {
   }
 }
 
-/* Status Pills (M3 Tonal Chips) */
+/* ==========================================================================
+   容器
+   ========================================================================== */
+.m3-card {
+  position: relative;
+  background: var(--ag-surface-lowest) !important;
+  border: 1px solid var(--ag-outline-strong) !important;
+  border-radius: var(--ag-radius-lg) !important;
+  padding: 16px;
+  color: var(--ag-on-surface);
+  box-shadow: 0 1px 2px rgba(60, 64, 67, 0.06) !important;
+  transition:
+    box-shadow 160ms ease,
+    border-color 160ms ease;
+
+  &:hover {
+    box-shadow: var(--ag-shadow-1) !important;
+  }
+}
+
+.m3-tonal-card {
+  background: var(--ag-surface-low) !important;
+  border: 1px solid transparent !important;
+  border-radius: var(--ag-radius-md) !important;
+  padding: 12px;
+}
+
+/* 页面级高亮横幅（如「官方镜像源优化套件」提示条） */
+.m3-hero-banner {
+  position: relative;
+  overflow: hidden;
+  background: var(--ag-primary-container);
+  border: 1px solid color-mix(in srgb, var(--ag-primary) 16%, transparent);
+  border-radius: var(--ag-radius-lg);
+  padding: 16px 20px;
+  color: var(--ag-on-primary-container);
+}
+
+/* ==========================================================================
+   状态芯片
+   ========================================================================== */
 .m3-badge {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 3px 10px;
-  border-radius: 999px;
-  font-size: 0.72rem;
-  font-weight: 600;
-  font-family: var(--ag-font-mono);
-  line-height: 1.4;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: var(--ag-radius-pill);
   border: 1px solid transparent;
+  font-family: var(--ag-font-mono);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  line-height: 16px;
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+
+  &::before {
+    content: '';
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    flex-shrink: 0;
+  }
 
   &.primary {
     background: var(--ag-primary-container);
@@ -296,53 +504,58 @@ pre {
   &.success {
     background: var(--ag-success-container);
     color: var(--ag-success);
-    border-color: rgba(109, 213, 140, 0.25);
   }
   &.warning {
     background: var(--ag-warning-container);
-    color: var(--ag-warning);
-    border-color: rgba(255, 187, 41, 0.25);
+    color: var(--ag-on-warning-container);
   }
   &.danger {
     background: var(--ag-danger-container);
     color: var(--ag-danger);
-    border-color: rgba(255, 180, 171, 0.25);
   }
   &.neutral {
-    background: var(--ag-surface-high);
+    background: var(--ag-surface);
     color: var(--ag-on-surface-variant);
-    border-color: var(--ag-outline-variant);
   }
 }
 
-/* M3 Data Table */
+/* ==========================================================================
+   数据表
+   ========================================================================== */
 .m3-table-wrap {
   width: 100%;
-  overflow-x: auto;
-  border-radius: 16px;
-  border: 1px solid var(--ag-outline-variant);
+  overflow: auto;
+  border-radius: var(--ag-radius-md);
+  border: 1px solid var(--ag-outline-strong);
   background: var(--ag-surface-lowest);
 }
 
 table.m3-data-table {
   width: 100%;
-  border-collapse: collapse;
-  font-size: 0.82rem;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.8125rem;
 
   th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    padding: 10px 16px;
     text-align: left;
-    padding: 12px 16px;
-    background: var(--ag-surface);
+    background: var(--ag-surface-low);
     color: var(--ag-on-surface-variant);
-    font-weight: 600;
-    font-size: 0.75rem;
-    letter-spacing: 0.02em;
-    border-bottom: 1px solid var(--ag-outline-variant);
+    font-family: var(--ag-font-mono);
+    font-size: 0.6875rem;
+    font-weight: 500;
+    letter-spacing: 0.4px;
+    text-transform: uppercase;
     white-space: nowrap;
+    border-bottom: 1px solid var(--ag-outline-strong);
   }
 
   td {
     padding: 12px 16px;
+    height: 48px;
     border-bottom: 1px solid var(--ag-outline-variant);
     color: var(--ag-on-surface);
     vertical-align: middle;
@@ -352,87 +565,136 @@ table.m3-data-table {
     border-bottom: none;
   }
 
+  tbody tr {
+    transition: background-color 120ms ease;
+  }
+
   tbody tr:hover {
-    background: rgba(168, 199, 250, 0.05);
+    background: var(--ag-surface-low);
+  }
+
+  .mat-mdc-button-base {
+    height: 30px !important;
+    min-height: 30px !important;
+    padding: 0 10px !important;
+    font-size: 0.75rem !important;
   }
 }
 
-/* M3 Form Controls & Native Inputs inside M3 cards */
+/* ==========================================================================
+   表单
+   ========================================================================== */
 .m3-field {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  min-width: 0;
 
   label {
-    font-size: 0.78rem;
-    font-weight: 600;
-    color: var(--ag-on-surface);
     display: flex;
     align-items: center;
     gap: 4px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: var(--ag-on-surface-variant);
+    letter-spacing: 0.1px;
   }
 
   .m3-req {
     color: var(--ag-danger);
-    font-weight: 700;
+    font-weight: 600;
   }
 
   input:not([type='checkbox']):not([type='radio']):not([type='range']),
   select,
   textarea {
     width: 100%;
-    min-height: 40px;
-    padding: 9px 14px;
-    border-radius: 12px;
-    border: 1px solid var(--ag-outline);
+    min-height: 38px;
+    padding: 8px 12px;
+    border-radius: var(--ag-radius-sm);
+    border: 1px solid var(--ag-outline-strong);
     background: var(--ag-surface-lowest);
     color: var(--ag-on-surface);
     font-family: inherit;
-    font-size: 0.85rem;
-    transition: border-color 150ms, box-shadow 150ms;
+    font-size: 0.8125rem;
+    line-height: 20px;
+    transition:
+      border-color 140ms ease,
+      box-shadow 140ms ease;
+
+    &::placeholder {
+      color: #8a90a0;
+    }
+
+    &:hover:not(:disabled):not([readonly]) {
+      border-color: var(--ag-outline);
+    }
 
     &:focus {
       outline: none;
       border-color: var(--ag-primary);
-      box-shadow: 0 0 0 2px rgba(168, 199, 250, 0.25);
+      box-shadow: 0 0 0 3px rgba(26, 115, 232, 0.14);
     }
 
     &[aria-invalid='true'],
     &.invalid {
       border-color: var(--ag-danger);
-      box-shadow: 0 0 0 2px rgba(255, 180, 171, 0.2);
+      box-shadow: 0 0 0 3px rgba(217, 48, 37, 0.12);
     }
 
     &:disabled,
     &[readonly] {
-      opacity: 0.65;
+      background: var(--ag-surface-low);
+      opacity: 0.8;
+      cursor: not-allowed;
     }
   }
 
+  textarea {
+    min-height: 80px;
+    resize: vertical;
+    line-height: 1.6;
+  }
+
+  select {
+    appearance: none;
+    padding-right: 32px;
+    background-image: linear-gradient(45deg, transparent 50%, currentColor 50%),
+      linear-gradient(135deg, currentColor 50%, transparent 50%);
+    background-position:
+      calc(100% - 16px) calc(50% + 1px),
+      calc(100% - 11px) calc(50% + 1px);
+    background-size:
+      5px 5px,
+      5px 5px;
+    background-repeat: no-repeat;
+    cursor: pointer;
+  }
+
   .m3-hint {
-    font-size: 0.72rem;
+    font-size: 0.75rem;
+    line-height: 1.5;
     color: var(--ag-on-surface-variant);
-    line-height: 1.45;
   }
 
   .m3-field-error {
-    font-size: 0.74rem;
-    font-weight: 600;
-    color: var(--ag-danger);
     display: flex;
     align-items: center;
     gap: 4px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: var(--ag-danger);
   }
 }
 
-/* Unified List Search / Filter Toolbar (FE-011) */
+/* 筛选 / 搜索工具条 */
 .m3-filter-bar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 14px;
+  margin-bottom: 12px;
 
   .filter-left,
   .filter-right {
@@ -444,94 +706,132 @@ table.m3-data-table {
 
   .m3-search-input {
     min-width: 220px;
-    height: 38px;
+    height: 36px;
     padding: 0 14px;
-    border-radius: 999px;
-    border: 1px solid var(--ag-outline);
-    background: var(--ag-surface-lowest);
+    border-radius: var(--ag-radius-sm);
+    border: 1px solid transparent;
+    background: var(--ag-surface-low);
     color: var(--ag-on-surface);
-    font-size: 0.82rem;
+    font-size: 0.8125rem;
+    transition:
+      border-color 140ms ease,
+      background-color 140ms ease,
+      box-shadow 140ms ease;
+
+    &::placeholder {
+      color: var(--ag-on-surface-variant);
+    }
+
+    &:hover {
+      background: var(--ag-surface);
+    }
 
     &:focus {
       outline: none;
+      background: var(--ag-surface-lowest);
       border-color: var(--ag-primary);
-      box-shadow: 0 0 0 2px rgba(168, 199, 250, 0.2);
+      box-shadow: 0 0 0 3px rgba(26, 115, 232, 0.14);
     }
   }
 
   .m3-filter-select {
-    height: 38px;
+    height: 36px;
     padding: 0 12px;
-    border-radius: 999px;
-    border: 1px solid var(--ag-outline);
+    border-radius: var(--ag-radius-sm);
+    border: 1px solid var(--ag-outline-strong);
     background: var(--ag-surface-lowest);
     color: var(--ag-on-surface);
-    font-size: 0.8rem;
+    font-size: 0.8125rem;
+    cursor: pointer;
   }
 }
 
-/* M3 Modal Overlay */
+/* ==========================================================================
+   浮层
+   ========================================================================== */
 .m3-modal-backdrop {
   position: fixed;
   inset: 0;
   z-index: 1000;
-  background: rgba(5, 8, 14, 0.72);
-  backdrop-filter: blur(6px);
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 16px;
-  animation: m3FadeIn 150ms cubic-bezier(0.2, 0, 0, 1);
+  background: rgba(32, 33, 36, 0.42);
+  animation: agFadeIn 140ms ease;
+}
+
+@keyframes agFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes agDialogIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.995);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 .m3-modal-dialog {
   width: 100%;
-  max-width: 680px;
+  max-width: 640px;
   max-height: 88vh;
   max-height: min(88dvh, 88vh);
   display: flex;
   flex-direction: column;
-  background: var(--ag-surface-low);
+  background: var(--ag-surface-lowest);
   border: 1px solid var(--ag-outline-variant);
-  border-radius: 28px;
-  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.45);
+  border-radius: var(--ag-radius-xl);
+  box-shadow: var(--ag-shadow-3);
   overflow: hidden;
+  animation: agDialogIn 180ms cubic-bezier(0.2, 0, 0, 1);
 
   &.lg {
     max-width: 880px;
   }
   &.xl {
-    max-width: 1060px;
+    max-width: 1080px;
   }
 
   .m3-modal-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 18px 24px 14px;
-    border-bottom: 1px solid var(--ag-outline-variant);
+    gap: 12px;
     flex-shrink: 0;
+    padding: 20px 24px 16px;
 
     h3 {
       margin: 0;
-      font-family: var(--ag-font-display);
-      font-size: 1.08rem;
-      font-weight: 700;
       display: flex;
       flex-wrap: wrap;
       align-items: center;
-      gap: 10px;
+      gap: 8px;
+      font-family: var(--ag-font-display);
+      font-size: 1.125rem;
+      line-height: 1.6rem;
+      font-weight: 600;
+      letter-spacing: -0.1px;
     }
   }
 
   .m3-modal-body {
-    padding: 20px 24px;
-    overflow-y: auto;
-    flex: 1;
-    min-height: 0;
     display: flex;
+    flex: 1;
     flex-direction: column;
     gap: 16px;
+    min-height: 0;
+    padding: 0 24px 20px;
+    overflow-y: auto;
   }
 
   .m3-modal-footer {
@@ -539,42 +839,322 @@ table.m3-data-table {
     flex-wrap: wrap;
     align-items: center;
     justify-content: flex-end;
-    gap: 10px;
-    padding: 14px 24px;
-    border-top: 1px solid var(--ag-outline-variant);
-    background: var(--ag-surface);
+    gap: 8px;
     flex-shrink: 0;
+    padding: 12px 24px;
+    background: var(--ag-surface-low);
+    border-top: 1px solid var(--ag-outline-variant);
   }
 }
 
+/* ==========================================================================
+   控制台 / 空状态
+   ========================================================================== */
 .m3-code-console {
-  background: #090d14;
-  color: #e2e8f0;
-  border: 1px solid var(--ag-outline-variant);
-  border-radius: 16px;
+  max-height: 420px;
   padding: 14px 16px;
-  font-family: var(--ag-font-mono);
-  font-size: 0.78rem;
-  line-height: 1.55;
   overflow: auto;
-  max-height: 440px;
+  border-radius: var(--ag-radius-sm);
+  border: 1px solid #3c4043;
+  background: #202124;
+  color: #e8eaed;
+  font-family: var(--ag-font-mono);
+  font-size: 0.75rem;
+  line-height: 1.65;
   white-space: pre-wrap;
   word-break: break-all;
 }
 
 .m3-empty-state {
-  padding: 36px 24px;
-  text-align: center;
-  color: var(--ag-on-surface-variant);
-  background: var(--ag-surface-lowest);
+  padding: 32px 20px;
   border: 1px dashed var(--ag-outline);
-  border-radius: 18px;
-  font-size: 0.85rem;
+  border-radius: var(--ag-radius-md);
+  background: var(--ag-bg);
+  color: var(--ag-on-surface-variant);
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  text-align: center;
 }
 
-/* 自托管图标字体（Material Symbols Outlined 子集，仅含本项目用到的图标）。
-   不再从 fonts.googleapis.com 拉取：运维面板常在离线/受限网络下使用，
-   外部字体一旦加载失败，deployed_code / database 这类新图标名就会显示为空白。 */
+/* ==========================================================================
+   Angular Material 覆写 —— 对齐设计稿的控件规格
+   ========================================================================== */
+.mat-mdc-button-base {
+  border-radius: var(--ag-radius-sm) !important;
+  height: 36px !important;
+  min-height: 36px !important;
+  padding: 0 14px !important;
+  font-family: var(--ag-font-sans) !important;
+  font-size: 0.875rem !important;
+  font-weight: 500 !important;
+  letter-spacing: 0.1px !important;
+  line-height: 1 !important;
+}
+
+.mat-mdc-button-base .mat-icon,
+.mat-mdc-button-base mat-icon {
+  font-size: 18px;
+  width: 18px;
+  height: 18px;
+}
+
+.mat-mdc-button-base .mdc-button__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* 文字按钮 */
+.mat-mdc-button {
+  --mat-button-text-label-text-color: var(--ag-primary);
+  --mat-button-text-state-layer-color: transparent;
+  color: var(--ag-primary) !important;
+
+  &:hover {
+    background: var(--ag-primary-hover) !important;
+  }
+}
+
+/* 描边按钮 */
+.mat-mdc-outlined-button {
+  --mat-button-outlined-outline-color: var(--ag-outline-strong);
+  --mat-button-outlined-label-text-color: var(--ag-primary);
+  --mat-button-outlined-state-layer-color: transparent;
+  border-color: var(--ag-outline-strong) !important;
+  color: var(--ag-primary) !important;
+  background: var(--ag-surface-lowest);
+
+  &:hover {
+    background: var(--ag-bg) !important;
+  }
+
+  &.mat-warn {
+    color: var(--ag-danger) !important;
+    border-color: color-mix(in srgb, var(--ag-danger) 40%, transparent) !important;
+  }
+}
+
+/* 实心按钮 */
+.mat-mdc-unelevated-button,
+.mat-mdc-raised-button {
+  --mat-button-filled-container-color: var(--ag-primary-solid);
+  --mat-button-filled-label-text-color: var(--ag-on-primary);
+  box-shadow: none !important;
+  background: var(--ag-primary-solid) !important;
+  color: var(--ag-on-primary) !important;
+
+  &:hover {
+    background: #1557b0 !important;
+  }
+
+  &[disabled],
+  &.mat-mdc-button-disabled {
+    background: var(--ag-surface) !important;
+    color: #9aa0ac !important;
+  }
+
+  &.mat-warn {
+    background: var(--ag-danger) !important;
+    color: var(--ag-on-danger) !important;
+  }
+}
+
+html.dark-theme .mat-mdc-unelevated-button,
+html.dark-theme .mat-mdc-raised-button {
+  &:hover {
+    background: #a8c7fa !important;
+  }
+}
+
+.mat-mdc-icon-button {
+  width: 36px !important;
+  height: 36px !important;
+  padding: 8px !important;
+  color: var(--ag-on-surface-variant);
+
+  .mat-icon {
+    font-size: 20px;
+    width: 20px;
+    height: 20px;
+  }
+
+  &:hover {
+    background: var(--ag-surface-low) !important;
+    color: var(--ag-on-surface);
+  }
+}
+
+.mat-button-toggle-group {
+  border: 1px solid var(--ag-outline-strong) !important;
+  border-radius: var(--ag-radius-pill) !important;
+  overflow: hidden;
+  background: var(--ag-surface-lowest);
+}
+
+.mat-button-toggle {
+  background: transparent;
+  color: var(--ag-on-surface-variant);
+  font-size: 0.8125rem;
+  font-weight: 500;
+}
+
+.mat-button-toggle-checked {
+  background: var(--ag-primary-container) !important;
+  color: var(--ag-on-primary-container) !important;
+}
+
+.mat-button-toggle-appearance-standard .mat-button-toggle-label-content {
+  line-height: 34px !important;
+  padding: 0 14px !important;
+}
+
+.mat-button-toggle-button {
+  height: 34px;
+}
+
+/* 菜单 */
+.mat-mdc-menu-panel {
+  border-radius: var(--ag-radius-md) !important;
+  border: 1px solid var(--ag-outline-variant);
+  background: var(--ag-surface-lowest) !important;
+  box-shadow: var(--ag-shadow-2) !important;
+}
+
+.mat-mdc-menu-item {
+  min-height: 40px !important;
+  font-size: 0.875rem !important;
+}
+
+.mat-mdc-menu-item .mat-icon {
+  font-size: 18px;
+  width: 18px;
+  height: 18px;
+  color: var(--ag-on-surface-variant);
+}
+
+.mat-mdc-menu-item:hover:not([disabled]) {
+  background: var(--ag-surface-low) !important;
+}
+
+/* 标签页 */
+.mat-mdc-tab-group {
+  --mat-tab-header-divider-color: var(--ag-outline-variant);
+}
+
+.mat-mdc-tab .mdc-tab__text-label {
+  font-family: var(--ag-font-sans) !important;
+  font-size: 0.875rem !important;
+  font-weight: 500 !important;
+  letter-spacing: 0.1px !important;
+  color: var(--ag-on-surface-variant);
+}
+
+.mat-mdc-tab.mdc-tab--active .mdc-tab__text-label {
+  color: var(--ag-primary) !important;
+  font-weight: 600 !important;
+}
+
+.mat-mdc-tab-header {
+  --mat-tab-header-active-indicator-color: var(--ag-primary);
+  --mat-tab-header-active-label-text-color: var(--ag-primary);
+}
+
+.mat-mdc-tab .mat-icon {
+  font-size: 18px;
+  width: 18px;
+  height: 18px;
+}
+
+/* 进度条：设计稿为 6px 圆头轨道 */
+.mat-mdc-progress-bar {
+  --mat-progress-bar-track-height: 6px;
+  --mat-progress-bar-active-indicator-height: 6px;
+  height: 6px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--ag-surface);
+}
+
+.mat-mdc-progress-bar .mdc-linear-progress__buffer-bar {
+  background-color: var(--ag-surface);
+}
+
+/* 开关 / 复选 */
+.mat-mdc-slide-toggle {
+  --mat-slide-toggle-selected-track-color: var(--ag-primary);
+  --mat-slide-toggle-selected-handle-color: #ffffff;
+  --mat-slide-toggle-unselected-track-color: var(--ag-surface-highest);
+  --mat-slide-toggle-unselected-handle-color: #ffffff;
+  font-size: 0.8125rem;
+}
+
+.mat-mdc-checkbox {
+  --mat-checkbox-selected-checkmark-color: #ffffff;
+  font-size: 0.8125rem;
+}
+
+/* 提示气泡 */
+.mat-mdc-tooltip .mdc-tooltip__surface {
+  max-width: 320px;
+  padding: 6px 10px !important;
+  border-radius: var(--ag-radius-xs) !important;
+  background: #3c4043 !important;
+  color: #ffffff !important;
+  font-family: var(--ag-font-sans) !important;
+  font-size: 0.75rem !important;
+  line-height: 1.45 !important;
+}
+
+/* Toast */
+.mat-mdc-snack-bar-container {
+  --mat-snack-bar-container-color: #202124;
+  --mat-snack-bar-supporting-text-color: #e8eaed;
+  --mat-snack-bar-button-color: #8ab4f8;
+}
+
+.m3-snack-success .mdc-snackbar__surface,
+.m3-snack-error .mdc-snackbar__surface,
+.m3-snack-warning .mdc-snackbar__surface,
+.m3-snack-info .mdc-snackbar__surface {
+  border-radius: var(--ag-radius-sm) !important;
+  box-shadow: var(--ag-shadow-2) !important;
+  font-size: 0.8125rem;
+}
+
+.m3-snack-success .mdc-snackbar__surface {
+  border-left: 4px solid #34a853;
+}
+.m3-snack-error .mdc-snackbar__surface {
+  border-left: 4px solid #d93025;
+}
+.m3-snack-warning .mdc-snackbar__surface {
+  border-left: 4px solid #f29900;
+}
+.m3-snack-info .mdc-snackbar__surface {
+  border-left: 4px solid #1a73e8;
+}
+
+.mat-drawer-container,
+.mat-sidenav-container {
+  background: var(--ag-bg) !important;
+  color: var(--ag-on-surface);
+}
+
+.mat-divider {
+  border-top-color: var(--ag-outline-variant) !important;
+}
+
+.mat-mdc-progress-spinner {
+  --mat-progress-spinner-active-indicator-color: var(--ag-primary);
+}
+
+.xterm .xterm-viewport {
+  background-color: transparent !important;
+}
+
+/* ==========================================================================
+   图标字体（自托管 Material Symbols 子集，离线可用）
+   ========================================================================== */
 @font-face {
   font-family: 'Material Symbols Outlined';
   font-style: normal;
@@ -583,29 +1163,39 @@ table.m3-data-table {
   src: url('/fonts/material-symbols-outlined.woff') format('woff');
 }
 
-/* Offline Icon Ligature Overflow Safeguard (FE-017) */
 /*
- * 注意选择器权重：Angular Material 会给 <mat-icon> 自动追加 `material-icons` 类，
- * 而 Google Fonts 的图标样式表里有一条 `.material-icons { font-family: "Material Icons" }`
- * （类选择器，权重 0,1,0）。如果这里只用元素选择器 `mat-icon`（0,0,1），
- * 就会被那条规则覆盖，导致自定义字体族完全不生效——图标永远走旧字体。
- * 因此必须带上类，把权重提到 0,1,1 以上。
+ * 权重说明：Angular Material 会给 <mat-icon> 追加 material-icons 类，
+ * 旧图标样式表里的 `.material-icons { font-family: "Material Icons" }`（0,1,0）
+ * 会压过元素选择器 `mat-icon`（0,0,1）。因此这里必须带到类，权重 ≥ 0,1,1。
  */
 mat-icon,
 mat-icon.mat-icon,
 mat-icon.material-icons {
+  flex-shrink: 0;
   overflow: hidden;
   text-overflow: clip;
   white-space: nowrap;
-  flex-shrink: 0;
-  /* Material Symbols（MD3 图标集）优先，Material Icons 作为后备。 */
   font-family: 'Material Symbols Outlined', 'Material Icons', 'Material Icons Outlined';
   font-weight: normal;
   font-style: normal;
-  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  font-variation-settings:
+    'FILL' 0,
+    'wght' 400,
+    'GRAD' 0,
+    'opsz' 24;
   font-feature-settings: 'liga';
   letter-spacing: normal;
   text-transform: none;
   -webkit-font-feature-settings: 'liga';
   -webkit-font-smoothing: antialiased;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

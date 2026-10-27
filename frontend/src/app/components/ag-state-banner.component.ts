@@ -103,7 +103,7 @@ export type AgPageStateType =
         justify-content: space-between;
         gap: 12px;
         padding: 12px 16px;
-        border-radius: 16px;
+        border-radius: 12px;
         background: var(--ag-warning-container);
         border: 1px solid var(--ag-warning);
         color: var(--ag-on-surface);
@@ -135,7 +135,7 @@ export type AgPageStateType =
         justify-content: space-between;
         gap: 16px;
         padding: 24px;
-        border-radius: 20px;
+        border-radius: 16px;
         background: var(--ag-surface-lowest);
         border: 1px dashed var(--ag-outline);
       }
@@ -151,9 +151,9 @@ export type AgPageStateType =
         background: var(--ag-warning-container);
       }
       .state-icon-ring {
-        width: 48px;
-        height: 48px;
-        border-radius: 16px;
+        width: 44px;
+        height: 44px;
+        border-radius: 12px;
         background: var(--ag-surface);
         border: 1px solid var(--ag-outline-variant);
         display: flex;

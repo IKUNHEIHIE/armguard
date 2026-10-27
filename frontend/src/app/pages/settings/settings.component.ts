@@ -54,7 +54,7 @@ import { copyToClipboard } from '@/utils/clipboard'
         style="border-color: var(--ag-warning); background: var(--ag-warning-container); color: var(--ag-on-warning-container); display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px"
       >
         <div style="display: flex; align-items: center; gap: 8px">
-          <mat-icon style="color: var(--ag-warning)">info</mat-icon>
+          <mat-icon style="color: var(--ag-warning)">info_outline</mat-icon>
           <span><strong>端口或 HTTPS 证书配置已变更 (已保存)</strong>：需重启面板守护进程后在新地址生效。</span>
         </div>
         <button mat-flat-button color="warn" (click)="restartEngine()">立即重启面板</button>

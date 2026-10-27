@@ -2,6 +2,10 @@ import { Component, computed, inject } from '@angular/core'
 import { AgMaterialModule } from '../core/material.module'
 import { SystemService } from '../core/system.service'
 
+/**
+ * 顶部栏的「芯片 + 温度」芯片（设计稿第三枚状态芯片），
+ * 点击展开 ARM 硅片传感器诊断浮层。
+ */
 @Component({
   selector: 'ag-arm-hardware-badge',
   standalone: true,
@@ -9,58 +13,53 @@ import { SystemService } from '../core/system.service'
   template: `
     <button
       type="button"
-      mat-stroked-button
-      [matMenuTriggerFor]="thermalMenu"
-      class="arm-die-pill font-mono"
+      class="die-chip font-mono"
       [class.warn]="hasAnyWarning()"
-      aria-label="查看 ARM 芯片温度、供电与降频诊断状态"
-      matTooltip="查看 ARM 芯片传感器与供电状态"
+      [matMenuTriggerFor]="thermalMenu"
+      aria-label="查看 ARM 芯片温度与供电诊断"
+      matTooltip="ARM 硅片传感器诊断"
     >
-      <span class="status-dot" [ngClass]="dotClass()" aria-hidden="true"></span>
       <mat-icon class="chip-icon" aria-hidden="true">memory</mat-icon>
-      <span class="temp-text">{{ tempDisplay() }}</span>
-      <span *ngIf="hasAnyWarning()" class="warn-tag">告警</span>
+      <span class="chip-text">{{ chipLabel() }}</span>
     </button>
 
-    <mat-menu #thermalMenu="matMenu" class="m3-thermal-menu" xPosition="before">
-      <div class="thermal-popover font-mono" (click)="$event.stopPropagation()">
-        <div class="popover-header">
-          <div class="title-row">
-            <mat-icon class="primary-icon" aria-hidden="true">developer_board</mat-icon>
+    <mat-menu #thermalMenu="matMenu" class="ag-thermal-menu" xPosition="before">
+      <div class="thermal-popover" (click)="$event.stopPropagation()">
+        <header class="pop-head">
+          <div class="pop-title-row">
+            <span class="pop-icon" aria-hidden="true"><mat-icon>developer_board</mat-icon></span>
             <div>
-              <div class="title">ARM 硅片传感器诊断</div>
-              <div class="subtitle">{{ boardLabel() }} · 更新: {{ system.lastUpdatedLabel() }}</div>
+              <div class="pop-title">ARM 硅片传感器诊断</div>
+              <div class="pop-sub font-mono">{{ boardLabel() }} · 更新 {{ system.lastUpdatedLabel() }}</div>
             </div>
           </div>
-          <span class="m3-badge" [ngClass]="statusBadgeClass()">
-            {{ statusLabel() }}
-          </span>
+          <span class="m3-badge" [ngClass]="statusBadgeClass()">{{ statusLabel() }}</span>
+        </header>
+
+        <div class="pop-grid">
+          <div class="pop-tile">
+            <span class="tile-label">核心温度</span>
+            <span class="tile-value font-mono">{{ tempDisplay() }}</span>
+            <span class="tile-sub">{{ thermal().temp_source || '无温度传感器' }}</span>
+          </div>
+          <div class="pop-tile">
+            <span class="tile-label">核心频率</span>
+            <span class="tile-value font-mono">{{ freqDisplay() }}</span>
+            <span class="tile-sub">{{ thermal().governor || '未识别调速器' }}</span>
+          </div>
+          <div class="pop-tile">
+            <span class="tile-label">核心电压</span>
+            <span class="tile-value font-mono">{{ voltageDisplay() }}</span>
+            <span class="tile-sub">{{ thermal().throttle_source ? 'vcgencmd 采样' : '非树莓派平台' }}</span>
+          </div>
+          <div class="pop-tile">
+            <span class="tile-label">节流寄存器</span>
+            <span class="tile-value font-mono">{{ thermal().throttling_flags_hex || '—' }}</span>
+            <span class="tile-sub">Bitmask 掩码</span>
+          </div>
         </div>
 
-        <div class="metrics-grid">
-          <div class="metric-tile">
-            <span class="label">核心温度</span>
-            <span class="value">{{ tempDisplay() }}</span>
-            <span class="sub">{{ thermal().temp_source || '硬件不支持/无传感器' }}</span>
-          </div>
-          <div class="metric-tile">
-            <span class="label">核心工作频率</span>
-            <span class="value">{{ freqDisplay() }}</span>
-            <span class="sub">调速器: {{ thermal().governor || '硬件不支持' }}</span>
-          </div>
-          <div class="metric-tile">
-            <span class="label">核心电压</span>
-            <span class="value">{{ voltageDisplay() }}</span>
-            <span class="sub">{{ thermal().throttle_source ? 'vcgencmd 采样' : '非树莓派平台' }}</span>
-          </div>
-          <div class="metric-tile">
-            <span class="label">节流寄存器</span>
-            <span class="value">{{ thermal().throttling_flags_hex || '硬件不支持' }}</span>
-            <span class="sub">Bitmask 掩码</span>
-          </div>
-        </div>
-
-        <div class="flags-list">
+        <div class="pop-flags">
           <div class="flag-row">
             <span>供电欠压检测 (0x1)</span>
             <span class="m3-badge" [ngClass]="flagClass(thermal().under_voltage)">
@@ -85,124 +84,136 @@ import { SystemService } from '../core/system.service'
   `,
   styles: [
     `
-      .arm-die-pill {
-        border-radius: 999px !important;
-        height: 36px;
-        padding: 0 14px !important;
-        border-color: var(--ag-outline-variant) !important;
-        background: var(--ag-surface) !important;
-        font-size: 0.78rem;
+      :host {
+        display: inline-flex;
+      }
+      .die-chip {
         display: inline-flex;
         align-items: center;
         gap: 6px;
+        height: 30px;
+        max-width: 320px;
+        padding: 0 10px;
+        border: none;
+        border-radius: var(--ag-radius-sm);
+        background: var(--ag-surface-low);
+        color: var(--ag-on-surface-variant);
+        font-size: 0.8125rem;
+        cursor: pointer;
       }
-      .arm-die-pill.warn {
-        border-color: var(--ag-danger) !important;
-        background: var(--ag-danger-container) !important;
+      .die-chip:hover {
+        background: var(--ag-surface);
       }
-      .status-dot {
-        width: 8px;
-        height: 8px;
-        border-radius: 50%;
-        display: inline-block;
-      }
-      .status-dot.ok {
-        background: var(--ag-success);
-        box-shadow: 0 0 8px var(--ag-success);
-      }
-      .status-dot.warm {
-        background: var(--ag-warning);
-      }
-      .status-dot.hot {
-        background: var(--ag-danger);
-      }
-      .status-dot.unknown {
-        background: var(--ag-on-surface-variant);
+      .die-chip.warn {
+        background: var(--ag-danger-container);
+        color: var(--ag-danger);
       }
       .chip-icon {
         font-size: 16px;
         width: 16px;
         height: 16px;
         color: var(--ag-primary);
+        flex-shrink: 0;
       }
-      .warn-tag {
-        background: var(--ag-danger);
-        color: #290001;
-        padding: 1px 6px;
-        border-radius: 999px;
-        font-size: 0.65rem;
-        font-weight: 700;
+      .die-chip.warn .chip-icon {
+        color: var(--ag-danger);
       }
+      .chip-text {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
       .thermal-popover {
-        width: 330px;
-        padding: 14px 16px;
+        width: 340px;
+        padding: 16px;
         display: flex;
         flex-direction: column;
         gap: 12px;
         color: var(--ag-on-surface);
       }
-      .popover-header {
+      .pop-head {
         display: flex;
-        align-items: center;
+        align-items: flex-start;
         justify-content: space-between;
+        gap: 8px;
         padding-bottom: 10px;
         border-bottom: 1px solid var(--ag-outline-variant);
       }
-      .title-row {
+      .pop-title-row {
         display: flex;
         align-items: center;
         gap: 8px;
+        min-width: 0;
       }
-      .primary-icon {
+      .pop-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 28px;
+        height: 28px;
+        flex-shrink: 0;
+        border-radius: var(--ag-radius-sm);
+        background: var(--ag-surface-low);
         color: var(--ag-primary);
       }
-      .title {
-        font-weight: 700;
-        font-size: 0.85rem;
+      .pop-icon mat-icon {
+        font-size: 17px;
+        width: 17px;
+        height: 17px;
       }
-      .subtitle {
-        font-size: 0.68rem;
+      .pop-title {
+        font-size: 0.8125rem;
+        font-weight: 600;
+      }
+      .pop-sub {
+        font-size: 0.625rem;
         color: var(--ag-on-surface-variant);
+        margin-top: 1px;
       }
-      .metrics-grid {
+      .pop-grid {
         display: grid;
         grid-template-columns: 1fr 1fr;
         gap: 8px;
       }
-      .metric-tile {
-        background: var(--ag-surface-low);
-        border: 1px solid var(--ag-outline-variant);
-        border-radius: 12px;
-        padding: 8px 10px;
+      .pop-tile {
         display: flex;
         flex-direction: column;
-        gap: 2px;
+        gap: 1px;
+        padding: 8px 10px;
+        border-radius: var(--ag-radius-sm);
+        background: var(--ag-surface-low);
       }
-      .metric-tile .label {
-        font-size: 0.68rem;
+      .tile-label {
+        font-size: 0.625rem;
         color: var(--ag-on-surface-variant);
       }
-      .metric-tile .value {
-        font-size: 0.88rem;
-        font-weight: 700;
-        color: var(--ag-primary);
+      .tile-value {
+        font-size: 0.8125rem;
+        font-weight: 600;
+        color: var(--ag-on-surface);
       }
-      .metric-tile .sub {
-        font-size: 0.65rem;
+      .tile-sub {
+        font-size: 0.5625rem;
         color: var(--ag-on-surface-variant);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
-      .flags-list {
+      .pop-flags {
         display: flex;
         flex-direction: column;
         gap: 6px;
-        padding-top: 6px;
+        padding-top: 8px;
         border-top: 1px solid var(--ag-outline-variant);
       }
       .flag-row {
         display: flex;
         align-items: center;
         justify-content: space-between;
-        font-size: 0.73rem;
+        gap: 8px;
+        font-size: 0.6875rem;
+        color: var(--ag-on-surface-variant);
       }
     `,
   ],
@@ -219,6 +230,17 @@ export class ArmHardwareBadgeComponent {
       th.freq_capped === true ||
       (th.temp_c !== null && th.temp_c >= 75)
     )
+  })
+
+  readonly chipLabel = computed(() => {
+    const info = this.system.info()
+    const th = this.thermal()
+    const model = info?.cpu_model || info?.arm_board_model || 'ARM SoC'
+    const short = model.length > 38 ? `${model.slice(0, 36)}…` : model
+    const freq = th.freq_mhz ?? this.system.realtime().cpu.frequency_mhz
+    const freqText = freq ? ` @ ${(freq / 1000).toFixed(1)}GHz` : ''
+    const temp = th.temp_c !== null && th.temp_c !== undefined ? ` · ${th.temp_c.toFixed(0)}°C` : ''
+    return `${short}${freqText}${temp}`
   })
 
   readonly tempDisplay = computed(() => {
@@ -245,15 +267,6 @@ export class ArmHardwareBadgeComponent {
     )
   })
 
-  dotClass() {
-    if (this.system.isStale()) return 'warm'
-    const t = this.thermal().temp_c
-    if (this.hasAnyWarning()) return 'hot'
-    if (t === null || t === undefined) return 'unknown'
-    if (t >= 65) return 'warm'
-    return 'ok'
-  }
-
   statusBadgeClass() {
     if (this.system.isStale()) return 'warning'
     if (this.hasAnyWarning()) return 'danger'
@@ -263,7 +276,7 @@ export class ArmHardwareBadgeComponent {
 
   statusLabel() {
     if (this.system.isStale()) return '数据已过期'
-    if (this.hasAnyWarning()) return '过热/节流告警'
+    if (this.hasAnyWarning()) return '过热 / 节流告警'
     if (this.thermal().temp_c === null) return '无温度传感器'
     return '运行正常'
   }
