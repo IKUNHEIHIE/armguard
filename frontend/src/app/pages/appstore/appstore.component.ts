@@ -196,10 +196,10 @@ import { appStoreApi, AppMarketItem, AppManagementData, InstallablePackage } fro
                 *ngIf="app.status === 'installed' && !app.protected_runtime && app.key !== 'nodejs'"
                 mat-button
                 color="warn"
-                [disabled]="isInstallingApp(app.key) || taskCenter.hasActiveAptTask()"
+                [disabled]="isInstallingApp(app.key) || taskCenter.hasActiveAptTask() || uninstallingKey() === app.key"
                 (click)="uninstallApp(app)"
               >
-                卸载
+                {{ uninstallingKey() === app.key ? '正在卸载...' : '卸载' }}
               </button>
             </ng-container>
           </div>
@@ -436,6 +436,8 @@ export class AppstoreComponent implements OnInit, OnDestroy, HasUnsavedChanges {
   } | null>(null)
   readonly selectedVersionPkg = signal('')
   readonly versionInstalling = signal(false)
+  /** 正在卸载的应用 key，用于按钮忙碌态 */
+  readonly uninstallingKey = signal('')
 
   private unlistenTaskComplete: (() => void) | null = null
 
@@ -528,11 +530,11 @@ export class AppstoreComponent implements OnInit, OnDestroy, HasUnsavedChanges {
     })
   }
 
-  async loadApps() {
+  async loadApps(force = false) {
     this.loading.set(true)
     this.loadError.set(null)
     try {
-      const res = await appStoreApi.getMarketList()
+      const res = await appStoreApi.getMarketList(force)
       this.apps.set(res.data?.data?.list || [])
     } catch (e: any) {
       const msg = e.message || '加载应用商店失败'
@@ -622,12 +624,22 @@ export class AppstoreComponent implements OnInit, OnDestroy, HasUnsavedChanges {
     })
     if (!res.confirmed) return
 
+    this.uninstallingKey.set(app.key)
+    this.toast.info(`正在卸载 ${app.name}，请稍候...`)
     try {
-      await appStoreApi.uninstallApp(app.key)
-      this.toast.success(`${app.name} 已成功卸载`)
-      this.loadApps()
+      const r = await appStoreApi.uninstallApp(app.key)
+      const stillInstalled = r.data?.data?.still_installed
+      if (stillInstalled) {
+        this.toast.warning(r.data?.message || `${app.name} 仍检测到残留组件`)
+      } else {
+        this.toast.success(r.data?.message || `${app.name} 已成功卸载`)
+      }
+      // 必须强制刷新：服务端有 30s 的商店缓存，否则卡片状态不会变
+      await this.loadApps(true)
     } catch (e: any) {
-      this.toast.error(e.message)
+      this.toast.error(e.message || '卸载失败')
+    } finally {
+      this.uninstallingKey.set('')
     }
   }
 

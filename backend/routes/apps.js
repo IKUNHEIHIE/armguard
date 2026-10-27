@@ -375,6 +375,20 @@ export function getMarketAppsWithStatus(force = false) {
   return result
 }
 
+// 卸载前需要先停掉的服务名（mysql 视实际安装的是 mariadb 还是 mysql 而定）
+const SERVICE_NAME_BY_KEY = {
+  nginx: 'nginx',
+  redis: 'redis-server',
+  docker: 'docker',
+  fail2ban: 'fail2ban'
+}
+
+function serviceCandidatesFor(appKey) {
+  if (appKey === 'mysql') return ['mariadb', 'mysql']
+  const s = SERVICE_NAME_BY_KEY[appKey]
+  return s ? [s] : []
+}
+
 // 同一功能位可能由不同发行包提供（例如 MariaDB 与 MySQL 都叫“数据库”）
 const APP_PKG_CANDIDATES = {
   mysql: [
@@ -653,8 +667,15 @@ export async function handleApps(pathname, req, res, url, ctx) {
     }
     const pkgName = target?.pkg || appKey
     try {
-      // 异步执行：apt-get 卸载可能需要数十秒，不能阻塞事件循环（AG-PERF-01）
-      const rmRes = await execFileAsync('apt-get', ['remove', '-y', pkgName], { timeout: 120000 })
+      // 先停服务，避免卸载时 dpkg 触发脚本卡在运行中的守护进程上
+      for (const svc of serviceCandidatesFor(appKey)) {
+        await execFileAsync('systemctl', ['stop', svc], { timeout: 30000 })
+      }
+
+      // 必须带 --autoremove：Debian 的 xxx-server 多为元包，
+      // 只 remove 元包时 apt 会报 "0 to remove"（实测 mariadb-server 就是如此），
+      // 真正提供二进制的 -core 包会留下，导致「卸载成功」但应用仍然显示已安装。
+      const rmRes = await execFileAsync('apt-get', ['remove', '-y', '--autoremove', pkgName], { timeout: 180000 })
       if (rmRes.error || rmRes.status !== 0) {
         const detail = rmRes.error
           ? rmRes.error.message
@@ -662,9 +683,23 @@ export async function handleApps(pathname, req, res, url, ctx) {
         res.json(null, `卸载失败: ${detail}`, 500)
         return true
       }
+
       invalidateMarketAppsCache()
-      ctx.logOperation(ctx.currentUser(), '卸载应用软件', target?.name || appKey)
-      res.json(null, '应用已成功卸载')
+
+      // 复核：apt 返回 0 不代表真的卸干净了，必须以系统实际状态为准
+      const after = getMarketAppsWithStatus(true).find(a => a.key === appKey)
+      const stillInstalled = after?.status === 'installed'
+      ctx.logOperation(
+        ctx.currentUser(),
+        '卸载应用软件',
+        `${target?.name || appKey} (${pkgName})${stillInstalled ? ' — 仍检测到残留' : ''}`
+      )
+      res.json(
+        { still_installed: !!stillInstalled, current_version: after?.current_version || null },
+        stillInstalled
+          ? `${target?.name || appKey} 已执行卸载，但系统中仍检测到残留组件，请检查是否有其他包依赖它`
+          : '应用已成功卸载'
+      )
     } catch (e) {
       res.json(null, `卸载失败: ${e.message}`, 500)
     }

@@ -92,7 +92,12 @@ export const appStoreApi = {  getMarketList: (refresh = false) =>
     }),
   getInstallableVersions: (key: string) =>
     apiClient.get<ApiResponse<InstallableVersions>>(`/apps/${key}/versions`),
-  uninstallApp: (key: string) => apiClient.post<ApiResponse<void>>(`/apps/${key}/uninstall`),
+  uninstallApp: (key: string) =>
+    apiClient.post<ApiResponse<{ still_installed: boolean; current_version: string | null }>>(
+      `/apps/${key}/uninstall`,
+      {},
+      { timeout: 180000 } // apt-get remove --autoremove 可能耗时较久，单独放宽超时
+    ),
   getTaskProgress: (key: string, taskId: string) =>
     apiClient.get<ApiResponse<AppTaskProgress>>(`/apps/${key}/install-progress`, {
       params: { task_id: taskId },

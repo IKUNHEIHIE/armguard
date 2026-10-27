@@ -893,6 +893,11 @@ async function handleHttpRequest(req, res) {
 
   if (pathname.startsWith('/assets/')) {
     headers['Cache-Control'] = 'public, max-age=31536000, immutable'
+  } else if (ext === '.html') {
+    // SPA 入口必须每次向服务器校验：浏览器缓存住旧 index.html 会连带使用旧哈希的
+    // JS/CSS，升级后用户看到的是上一个版本（图标、交互都没更新），极易误判成功能没修好。
+    headers['Cache-Control'] = 'no-store, no-cache, must-revalidate'
+    headers['Pragma'] = 'no-cache'
   } else {
     headers['Cache-Control'] = 'no-cache, must-revalidate'
   }
