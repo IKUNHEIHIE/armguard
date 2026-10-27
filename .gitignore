@@ -53,3 +53,7 @@ temp/
 tmp/
 大数据作业/
 大数据作业.zip
+
+# Release artifacts (uploaded to GitHub Releases, not tracked)
+.release-stage/
+release/
