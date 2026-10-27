@@ -432,7 +432,8 @@ async function listInstallableVersions(appKey, target) {
 }
 
 /** systemd 的通用噪声行，这些对定位问题没有帮助 */
-const SYSTEMD_NOISE = /^(Job for |See "systemctl|░░|Subject:|Defined-By:|Support:|The unit |TriggeredBy:)/
+const SYSTEMD_NOISE =
+  /^(Job for |See |░░|Subject:|Defined-By:|Support:|The unit |TriggeredBy:|\s*$)/i
 
 /**
  * 从 journalctl 中提取服务启动失败的真实根因。
@@ -457,6 +458,25 @@ async function describeSystemdFailure(serviceName, child) {
     )
     if (candidate) root = candidate
   } catch {}
+
+  if (!root) {
+    // journal 没有可用信息时，从 systemctl status 里找线索：
+    // 未安装的单元会明确提示 "Unit xxx.service could not be found."
+    try {
+      const s = await execFileAsync('systemctl', ['status', serviceName, '--no-pager', '-l', '-n', '5'], {
+        timeout: 8000,
+        maxBuffer: 1024 * 1024
+      })
+      const lines = String(s.stdout || '')
+        .split('\n')
+        .map(l => l.trim())
+        .filter(Boolean)
+      const hit = lines.find(l =>
+        /could not be found|not found|Active: failed|code=exited|status=\d+|Loaded: masked|Loaded: not-found/i.test(l)
+      )
+      if (hit) root = hit
+    } catch {}
+  }
 
   if (!root) {
     const fromStderr = String(child?.stderr || '')
