@@ -508,6 +508,198 @@ async function describeSystemdFailure(serviceName, child) {
   return `服务 [${serviceName}] 操作失败：${trimmed}`
 }
 
+// ================= Node.js 版本管理器辅助函数 =================
+const NODE_INSTALL_ROOT = '/opt/nodejs'
+const NODE_BIN_DIR = '/usr/local/bin'
+const NODE_CLI_BINS = ['node', 'npm', 'npx', 'corepack']
+const NODE_INDEX_URLS = [
+  'https://npmmirror.com/mirrors/node/index.json',
+  'https://nodejs.org/dist/index.json'
+]
+
+function nodeDistArch() {
+  if (process.arch === 'arm64') return 'linux-arm64'
+  if (process.arch === 'arm') return 'linux-armv7l'
+  if (process.arch === 'x64') return 'linux-x64'
+  return `linux-${process.arch}`
+}
+
+function compareSemver(a, b) {
+  const pa = a.split('.').map(Number)
+  const pb = b.split('.').map(Number)
+  for (let i = 0; i < 3; i += 1) {
+    if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) - (pb[i] || 0)
+  }
+  return 0
+}
+
+function nodeVersionInstalled(ver) {
+  return fs.existsSync(path.join(NODE_INSTALL_ROOT, `v${ver}`, 'bin', 'node'))
+}
+
+function listInstalledNodeVersions() {
+  try {
+    return fs
+      .readdirSync(NODE_INSTALL_ROOT)
+      .filter(n => /^v\d+\.\d+\.\d+$/.test(n))
+      .filter(n => fs.existsSync(path.join(NODE_INSTALL_ROOT, n, 'bin', 'node')))
+      .map(n => ({ version: n.slice(1), path: path.join(NODE_INSTALL_ROOT, n) }))
+      .sort((a, b) => compareSemver(b.version, a.version))
+  } catch {
+    return []
+  }
+}
+
+/** 当前 CLI 指向的版本（读 /usr/local/bin/node 软链） */
+function readCurrentNodeVersion() {
+  try {
+    const target = fs.readlinkSync(path.join(NODE_BIN_DIR, 'node'))
+    const m = target.match(/\/opt\/nodejs\/v(\d+\.\d+\.\d+)\//)
+    if (m) return { version: m[1], path: target }
+  } catch {}
+  return null
+}
+
+async function readSystemNodeVersion() {
+  const r = await execFileAsync('/usr/bin/node', ['-v'], { timeout: 5000 })
+  return (!r.error && r.status === 0 ? String(r.stdout).trim() : null) || process.version
+}
+
+async function fetchAvailableNodeVersions() {
+  let lastErr = null
+  for (const url of NODE_INDEX_URLS) {
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(12000), redirect: 'follow' })
+      if (!res.ok) {
+        lastErr = new Error(`HTTP ${res.status}`)
+        continue
+      }
+      const arr = await res.json()
+      if (!Array.isArray(arr) || arr.length === 0) {
+        lastErr = new Error('返回数据为空')
+        continue
+      }
+      return arr
+        .map(x => ({
+          version: String(x.version || '').replace(/^v/, ''),
+          lts: x.lts || false,
+          date: x.date || ''
+        }))
+        .filter(x => /^\d+\.\d+\.\d+$/.test(x.version))
+        .slice(0, 40)
+    } catch (e) {
+      lastErr = e
+    }
+  }
+  throw new Error(lastErr?.message || '无法连接版本索引')
+}
+
+async function downloadToFile(url, dest, onProgress) {
+  const res = await fetch(url, { signal: AbortSignal.timeout(300000), redirect: 'follow' })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const total = Number(res.headers.get('content-length') || 0)
+  const file = fs.createWriteStream(dest)
+  const reader = res.body.getReader()
+  let written = 0
+  let lastTick = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    written += value.length
+    if (!file.write(Buffer.from(value))) {
+      await new Promise(r => file.once('drain', r))
+    }
+    if (total && Date.now() - lastTick > 600) {
+      lastTick = Date.now()
+      onProgress(Math.min(99, Math.round((written / total) * 100)))
+    }
+  }
+  await new Promise((resolve, reject) => file.end(err => (err ? reject(err) : resolve())))
+  if (total && written < total) throw new Error(`下载不完整 (${written}/${total} 字节)`)
+  return written
+}
+
+async function installNodeVersion(ver, task) {
+  const arch = nodeDistArch()
+  const fileName = `node-v${ver}-${arch}.tar.xz`
+  const dir = path.join(NODE_INSTALL_ROOT, `v${ver}`)
+  fs.mkdirSync(NODE_INSTALL_ROOT, { recursive: true })
+  const tmpFile = `/tmp/${fileName}`
+
+  let ok = false
+  let lastErr = null
+  for (const indexUrl of NODE_INDEX_URLS) {
+    const base = indexUrl.replace(/\/index\.json$/, '')
+    const url = `${base}/v${ver}/${fileName}`
+    try {
+      task.logs.push(`[armguard-node] GET ${url}`)
+      task.log_tail = `正在下载 ${fileName}...`
+      const bytes = await downloadToFile(url, tmpFile, pct => {
+        task.progress_percent = 5 + Math.round(pct * 0.65)
+        task.log_tail = `下载中 ${pct}%（${fileName}）`
+      })
+      task.logs.push(`[armguard-node] 下载完成 ${Math.round(bytes / 1024 / 1024)} MB`)
+      ok = true
+      break
+    } catch (e) {
+      lastErr = e
+      task.logs.push(`[armguard-node] 下载失败: ${e.message}`)
+    }
+  }
+  if (!ok) throw new Error(`下载失败: ${lastErr?.message || '所有镜像均不可用'}`)
+
+  task.progress_percent = 72
+  task.log_tail = '正在解压安装包...'
+  fs.rmSync(dir, { recursive: true, force: true })
+  fs.mkdirSync(dir, { recursive: true })
+  const tar = await execFileAsync('tar', ['-xJf', tmpFile, '-C', dir, '--strip-components=1'], {
+    timeout: 180000
+  })
+  try {
+    fs.rmSync(tmpFile, { force: true })
+  } catch {}
+  if (tar.error || tar.status !== 0) {
+    throw new Error(
+      `解压失败: ${(tar.stderr || '').trim() || tar.error?.message || `退出码 ${tar.status}`}（若提示缺少 xz，请先安装 xz-utils）`
+    )
+  }
+  if (!fs.existsSync(path.join(dir, 'bin', 'node'))) {
+    throw new Error('解压后未找到 bin/node，安装包可能不完整')
+  }
+  task.progress_percent = 95
+  task.log_tail = '安装完成，正在收尾...'
+}
+
+function switchNodeVersion(ver) {
+  const binSrc = path.join(NODE_INSTALL_ROOT, `v${ver}`, 'bin')
+  if (!fs.existsSync(path.join(binSrc, 'node'))) {
+    throw new Error(`Node.js v${ver} 未安装`)
+  }
+  fs.mkdirSync(NODE_BIN_DIR, { recursive: true })
+  const linked = []
+  for (const name of NODE_CLI_BINS) {
+    const src = path.join(binSrc, name)
+    if (!fs.existsSync(src)) continue
+    const dst = path.join(NODE_BIN_DIR, name)
+    try {
+      fs.unlinkSync(dst)
+    } catch {}
+    fs.symlinkSync(src, dst)
+    linked.push(name)
+  }
+  return { version: ver, linked, bin_dir: NODE_BIN_DIR }
+}
+
+function clearNodeSymlinks() {
+  for (const name of NODE_CLI_BINS) {
+    const dst = path.join(NODE_BIN_DIR, name)
+    try {
+      const target = fs.readlinkSync(dst)
+      if (target.startsWith(NODE_INSTALL_ROOT)) fs.unlinkSync(dst)
+    } catch {}
+  }
+}
+
 export async function handleApps(pathname, req, res, url, ctx) {
   if (!pathname.startsWith('/api/v1/apps/')) return false
 
@@ -666,43 +858,79 @@ export async function handleApps(pathname, req, res, url, ctx) {
       return true
     }
     const pkgName = target?.pkg || appKey
-    try {
-      // 先停服务，避免卸载时 dpkg 触发脚本卡在运行中的守护进程上
-      for (const svc of serviceCandidatesFor(appKey)) {
-        await execFileAsync('systemctl', ['stop', svc], { timeout: 30000 })
-      }
-
-      // 必须带 --autoremove：Debian 的 xxx-server 多为元包，
-      // 只 remove 元包时 apt 会报 "0 to remove"（实测 mariadb-server 就是如此），
-      // 真正提供二进制的 -core 包会留下，导致「卸载成功」但应用仍然显示已安装。
-      const rmRes = await execFileAsync('apt-get', ['remove', '-y', '--autoremove', pkgName], { timeout: 180000 })
-      if (rmRes.error || rmRes.status !== 0) {
-        const detail = rmRes.error
-          ? rmRes.error.message
-          : ((rmRes.stderr || rmRes.stdout || '').trim() || `apt-get 退出码 ${rmRes.status}`)
-        res.json(null, `卸载失败: ${detail}`, 500)
-        return true
-      }
-
-      invalidateMarketAppsCache()
-
-      // 复核：apt 返回 0 不代表真的卸干净了，必须以系统实际状态为准
-      const after = getMarketAppsWithStatus(true).find(a => a.key === appKey)
-      const stillInstalled = after?.status === 'installed'
-      ctx.logOperation(
-        ctx.currentUser(),
-        '卸载应用软件',
-        `${target?.name || appKey} (${pkgName})${stillInstalled ? ' — 仍检测到残留' : ''}`
-      )
-      res.json(
-        { still_installed: !!stillInstalled, current_version: after?.current_version || null },
-        stillInstalled
-          ? `${target?.name || appKey} 已执行卸载，但系统中仍检测到残留组件，请检查是否有其他包依赖它`
-          : '应用已成功卸载'
-      )
-    } catch (e) {
-      res.json(null, `卸载失败: ${e.message}`, 500)
+    // 卸载改为后台任务：apt-get remove --autoremove 可能持续数十秒，
+    // 同步等待会让前端只能干等（甚至超过 axios 超时），也看不到过程。
+    // 现在与安装走同一套任务中心，可实时看日志、切换页面也不中断。
+    const unTaskId = `task_un_${appKey}_${Date.now()}`
+    const unTask = {
+      task_id: unTaskId,
+      app_key: appKey,
+      kind: 'uninstall',
+      stage: 'installing',
+      progress_percent: 10,
+      logs: [`[armguard-pkg] 正在卸载 ${target?.name || appKey} (${pkgName})...`],
+      log_tail: `正在卸载 ${target?.name || appKey}...`,
+      started_at: new Date().toISOString()
     }
+    appInstallTasks.set(unTaskId, unTask)
+
+    ;(async () => {
+      try {
+        // 先停服务，避免卸载时 dpkg 触发脚本卡在运行中的守护进程上
+        for (const svc of serviceCandidatesFor(appKey)) {
+          unTask.log_tail = `正在停止服务 ${svc}...`
+          unTask.logs.push(`[armguard-pkg] systemctl stop ${svc}`)
+          await execFileAsync('systemctl', ['stop', svc], { timeout: 30000 })
+        }
+
+        unTask.progress_percent = 30
+        unTask.log_tail = '正在移除软件包（含自动安装的依赖）...'
+        unTask.logs.push(`[armguard-pkg] apt-get remove -y --autoremove ${pkgName}`)
+
+        // 必须带 --autoremove：Debian 的 xxx-server 多为元包，
+        // 只 remove 元包时 apt 会报 "0 to remove"（实测 mariadb-server 就是如此），
+        // 真正提供二进制的 -core 包会留下，导致「卸载成功」但应用仍显示已安装。
+        const rmRes = await execFileAsync('apt-get', ['remove', '-y', '--autoremove', pkgName], { timeout: 180000 })
+        const out = `${rmRes.stdout || ''}${rmRes.stderr || ''}`.trim()
+        if (out) {
+          for (const line of out.split('\n').slice(-25)) unTask.logs.push(line)
+          unTask.log_tail = out.split('\n').filter(Boolean).pop() || unTask.log_tail
+        }
+        if (rmRes.error || rmRes.status !== 0) {
+          unTask.stage = 'failed'
+          unTask.progress_percent = 100
+          unTask.error_message = rmRes.error
+            ? rmRes.error.message
+            : ((rmRes.stderr || rmRes.stdout || '').trim() || `apt-get 退出码 ${rmRes.status}`)
+          unTask.log_tail = `卸载失败: ${unTask.error_message}`
+          return
+        }
+
+        invalidateMarketAppsCache()
+        const after = getMarketAppsWithStatus(true).find(a => a.key === appKey)
+        const stillInstalled = after?.status === 'installed'
+
+        unTask.stage = 'done'
+        unTask.progress_percent = 100
+        unTask.still_installed = !!stillInstalled
+        unTask.log_tail = stillInstalled
+          ? `${target?.name || appKey} 已执行卸载，但系统中仍检测到残留组件`
+          : `${target?.name || appKey} 卸载完成`
+        unTask.logs.push(unTask.log_tail)
+        ctx.logOperation(
+          ctx.currentUser(),
+          '卸载应用软件',
+          `${target?.name || appKey} (${pkgName})${stillInstalled ? ' — 仍检测到残留' : ''}`
+        )
+      } catch (e) {
+        unTask.stage = 'failed'
+        unTask.progress_percent = 100
+        unTask.error_message = e.message
+        unTask.log_tail = `卸载失败: ${e.message}`
+      }
+    })()
+
+    res.json({ task_id: unTaskId, app_key: appKey }, `已创建卸载任务：${target?.name || appKey}`)
     return true
   }
 
@@ -1361,6 +1589,133 @@ export async function handleApps(pathname, req, res, url, ctx) {
       res.json(null, `保存失败，已恢复原配置: ${e.message}`, 500)
       return true
     }
+  }
+
+  // ================= Node.js 版本管理器（类似 nvm，多版本共存 + CLI 切换） =================
+  //
+  // 设计要点：
+  //  - 版本装到 /opt/nodejs/<version>，互不干扰；
+  //  - 切换只改 /usr/local/bin 下的软链（node/npm/npx/corepack），
+  //    绝不碰 /usr/bin/node —— 那是 ArmGuard 面板自己的运行时（systemd ExecStart 用的是绝对路径）；
+  //  - 下载走国内镜像优先，失败回退官方源。
+  if (pathname === '/api/v1/apps/nodejs/versions' && req.method === 'GET') {
+    try {
+      const installed = listInstalledNodeVersions()
+      const current = readCurrentNodeVersion()
+      let available = []
+      let availableError = null
+      try {
+        available = await fetchAvailableNodeVersions()
+      } catch (e) {
+        availableError = e.message
+      }
+      res.json({
+        installed,
+        current,
+        system_node: await readSystemNodeVersion(),
+        available,
+        available_error: availableError,
+        install_root: NODE_INSTALL_ROOT,
+        arch: nodeDistArch()
+      })
+    } catch (e) {
+      res.json(null, `读取 Node 版本信息失败: ${e.message}`, 500)
+    }
+    return true
+  }
+
+  if (pathname === '/api/v1/apps/nodejs/install-version' && req.method === 'POST') {
+    const body = await ctx.parseBody(req, res).catch(() => ({}))
+    const ver = String(body.version || '').trim().replace(/^v/, '')
+    if (!/^\d+\.\d+\.\d+$/.test(ver)) {
+      res.json(null, `版本号格式非法: ${ver}`, 400)
+      return true
+    }
+    if (nodeVersionInstalled(ver)) {
+      res.json(null, `Node.js v${ver} 已安装，无需重复安装`, 409)
+      return true
+    }
+    for (const existing of appInstallTasks.values()) {
+      if (existing.stage === 'installing' && existing.app_key === 'nodejs') {
+        res.json({ task_id: existing.task_id, task: existing }, '已有 Node.js 安装任务正在运行')
+        return true
+      }
+    }
+
+    const taskId = `task_node_${ver}_${Date.now()}`
+    const task = {
+      task_id: taskId,
+      app_key: 'nodejs',
+      kind: 'node-install',
+      stage: 'installing',
+      progress_percent: 5,
+      logs: [`[armguard-node] 准备安装 Node.js v${ver} (${nodeDistArch()})...`],
+      log_tail: `准备下载 Node.js v${ver}...`,
+      started_at: new Date().toISOString()
+    }
+    appInstallTasks.set(taskId, task)
+
+    ;(async () => {
+      try {
+        await installNodeVersion(ver, task)
+        invalidateMarketAppsCache()
+        task.stage = 'done'
+        task.progress_percent = 100
+        task.log_tail = `Node.js v${ver} 安装完成`
+        task.logs.push(`[armguard-node] 已安装到 ${NODE_INSTALL_ROOT}/v${ver}`)
+        if (!readCurrentNodeVersion()) {
+          switchNodeVersion(ver)
+          task.logs.push('[armguard-node] 这是第一个安装的版本，已自动设为默认 CLI 版本')
+        }
+        ctx.logOperation(ctx.currentUser(), '安装 Node.js 版本', `v${ver}`)
+      } catch (e) {
+        task.stage = 'failed'
+        task.progress_percent = 100
+        task.error_message = e.message
+        task.log_tail = `安装失败: ${e.message}`
+        task.logs.push(task.log_tail)
+      }
+    })()
+
+    res.json({ task_id: taskId }, `已创建 Node.js v${ver} 安装任务`)
+    return true
+  }
+
+  if (pathname === '/api/v1/apps/nodejs/switch-version' && req.method === 'POST') {
+    const body = await ctx.parseBody(req, res).catch(() => ({}))
+    const ver = String(body.version || '').trim().replace(/^v/, '')
+    if (!/^\d+\.\d+\.\d+$/.test(ver) || !nodeVersionInstalled(ver)) {
+      res.json(null, `Node.js v${ver} 尚未安装`, 400)
+      return true
+    }
+    try {
+      const result = switchNodeVersion(ver)
+      ctx.logOperation(ctx.currentUser(), '切换 Node.js CLI 版本', `v${ver}`)
+      res.json(result, `已切换默认 Node.js 为 v${ver}（新开终端生效）`)
+    } catch (e) {
+      res.json(null, `切换失败: ${e.message}`, 500)
+    }
+    return true
+  }
+
+  const nodeVerDelMatch = pathname.match(/^\/api\/v1\/apps\/nodejs\/version\/(\d+\.\d+\.\d+)$/)
+  if (nodeVerDelMatch && req.method === 'DELETE') {
+    const ver = nodeVerDelMatch[1]
+    if (!nodeVersionInstalled(ver)) {
+      res.json(null, `Node.js v${ver} 未安装`, 404)
+      return true
+    }
+    try {
+      const wasCurrent = readCurrentNodeVersion()?.version === ver
+      fs.rmSync(path.join(NODE_INSTALL_ROOT, `v${ver}`), { recursive: true, force: true })
+      if (wasCurrent) clearNodeSymlinks()
+      invalidateMarketAppsCache()
+      ctx.logOperation(ctx.currentUser(), '删除 Node.js 版本', `v${ver}`)
+      res.json({ removed: ver, was_current: wasCurrent }, `已删除 Node.js v${ver}`)
+    } catch (e) {
+      res.json(null, `删除失败: ${e.message}`, 500)
+    }
+    return true
   }
 
   // PHP CLI Switch

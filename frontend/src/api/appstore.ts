@@ -75,6 +75,27 @@ export interface InstallableVersions {
   total_versions: number
 }
 
+export interface NodeInstalledVersion {
+  version: string
+  path: string
+}
+
+export interface NodeAvailableVersion {
+  version: string
+  lts: string | false
+  date: string
+}
+
+export interface NodeVersionInfo {
+  installed: NodeInstalledVersion[]
+  current: { version: string; path: string } | null
+  system_node: string
+  available: NodeAvailableVersion[]
+  available_error: string | null
+  install_root: string
+  arch: string
+}
+
 export const appStoreApi = {  getMarketList: (refresh = false) =>
     apiClient.get<ApiResponse<{ list: AppMarketItem[] }>>('/apps/market', {
       params: refresh ? { refresh: '1' } : undefined,
@@ -92,12 +113,18 @@ export const appStoreApi = {  getMarketList: (refresh = false) =>
     }),
   getInstallableVersions: (key: string) =>
     apiClient.get<ApiResponse<InstallableVersions>>(`/apps/${key}/versions`),
+  // 卸载现在是后台任务：立即返回 task_id，进度走任务中心
   uninstallApp: (key: string) =>
-    apiClient.post<ApiResponse<{ still_installed: boolean; current_version: string | null }>>(
-      `/apps/${key}/uninstall`,
-      {},
-      { timeout: 180000 } // apt-get remove --autoremove 可能耗时较久，单独放宽超时
-    ),
+    apiClient.post<ApiResponse<{ task_id: string; app_key: string }>>(`/apps/${key}/uninstall`, {}),
+
+  // ===== Node.js 版本管理器 =====
+  getNodeVersions: () => apiClient.get<ApiResponse<NodeVersionInfo>>('/apps/nodejs/versions'),
+  installNodeVersion: (version: string) =>
+    apiClient.post<ApiResponse<{ task_id: string }>>('/apps/nodejs/install-version', { version }),
+  switchNodeVersion: (version: string) =>
+    apiClient.post<ApiResponse<{ version: string; linked: string[] }>>('/apps/nodejs/switch-version', { version }),
+  removeNodeVersion: (version: string) =>
+    apiClient.delete<ApiResponse<{ removed: string; was_current: boolean }>>(`/apps/nodejs/version/${version}`),
   getTaskProgress: (key: string, taskId: string) =>
     apiClient.get<ApiResponse<AppTaskProgress>>(`/apps/${key}/install-progress`, {
       params: { task_id: taskId },

@@ -8,7 +8,7 @@ import { HasUnsavedChanges } from '../../core/unsaved-changes.guard'
 import { AgStateBannerComponent } from '../../components/ag-state-banner.component'
 import { AgModalComponent } from '../../components/ag-modal.component'
 import { WarpPluginDialogComponent } from '../../components/warp-plugin-dialog.component'
-import { appStoreApi, AppMarketItem, AppManagementData, InstallablePackage } from '@/api/appstore'
+import { appStoreApi, AppMarketItem, AppManagementData, InstallablePackage, NodeVersionInfo } from '@/api/appstore'
 
 @Component({
   selector: 'ag-appstore',
@@ -138,9 +138,6 @@ import { appStoreApi, AppMarketItem, AppManagementData, InstallablePackage } fro
               <span *ngIf="app.status === 'installed'" style="color: var(--ag-success); font-weight: 600">
                 当前版本: {{ app.current_version || '已安装' }}
               </span>
-              <span *ngIf="app.status !== 'installed'" style="color: var(--ag-on-surface-variant)">
-                可选版本: {{ app.versions.join(', ') || 'APT 默认版本' }}
-              </span>
             </div>
             <div *ngIf="app.key === 'php' && app.installed_versions && app.installed_versions.length > 0" style="font-size: 0.72rem; color: var(--ag-primary)">
               已装 PHP 版本: <strong>{{ app.installed_versions.join(', ') }}</strong>
@@ -183,6 +180,15 @@ import { appStoreApi, AppMarketItem, AppManagementData, InstallablePackage } fro
               >
                 服务配置
               </button>
+              <button
+                *ngIf="app.key === 'nodejs'"
+                mat-stroked-button
+                (click)="openNodeManager()"
+                matTooltip="安装多个 Node.js 版本并切换命令行默认版本"
+              >
+                <mat-icon>layers</mat-icon>
+                <span>版本管理</span>
+              </button>
               <!-- Self-Protection for Panel Runtime (REV-009) -->
               <span
                 *ngIf="app.status === 'installed' && (app.protected_runtime || app.key === 'nodejs')"
@@ -196,10 +202,10 @@ import { appStoreApi, AppMarketItem, AppManagementData, InstallablePackage } fro
                 *ngIf="app.status === 'installed' && !app.protected_runtime && app.key !== 'nodejs'"
                 mat-button
                 color="warn"
-                [disabled]="isInstallingApp(app.key) || taskCenter.hasActiveAptTask() || uninstallingKey() === app.key"
+                [disabled]="isInstallingApp(app.key) || taskCenter.hasActiveAptTask()"
                 (click)="uninstallApp(app)"
               >
-                {{ uninstallingKey() === app.key ? '正在卸载...' : '卸载' }}
+                {{ isInstallingApp(app.key) ? '任务进行中...' : '卸载' }}
               </button>
             </ng-container>
           </div>
@@ -337,6 +343,109 @@ import { appStoreApi, AppMarketItem, AppManagementData, InstallablePackage } fro
         </div>
       </ag-modal>
 
+      <!-- Node.js 版本管理器 -->
+      <ag-modal
+        [open]="!!nodeMgr()"
+        title="Node.js 版本管理"
+        icon="layers"
+        size="lg"
+        [submitting]="!!nodeBusy()"
+        (close)="closeNodeManager()"
+      >
+        <div class="font-mono" *ngIf="nodeMgr() as nm" style="display: flex; flex-direction: column; gap: 14px">
+          <ag-state-banner *ngIf="nm.loading" state="loading" title="正在读取版本信息..." />
+          <ag-state-banner
+            *ngIf="nm.error"
+            state="error"
+            title="读取失败"
+            [description]="nm.error"
+            primaryActionLabel="重试"
+            (primaryAction)="loadNodeVersions()"
+          />
+
+          <ng-container *ngIf="!nm.loading && nm.info as info">
+            <div class="m3-tonal-card" style="display: flex; flex-direction: column; gap: 6px">
+              <div>
+                当前 CLI 版本:
+                <strong style="color: var(--ag-success)">
+                  {{ info.current ? 'v' + info.current.version : '未接管（使用系统 /usr/bin/node ' + info.system_node + '）' }}
+                </strong>
+              </div>
+              <div class="m3-hint">
+                版本安装目录 <span class="font-mono">{{ info.install_root }}</span> ·
+                架构 <span class="font-mono">{{ info.arch }}</span> ·
+                切换后对<strong>新开的终端</strong>生效，不影响面板自身运行时
+              </div>
+            </div>
+
+            <div>
+              <h4 style="margin: 0 0 8px">已安装版本（{{ info.installed.length }}）</h4>
+              <div *ngIf="info.installed.length === 0" class="m3-hint">还没有通过面板安装过任何版本。</div>
+              <label
+                *ngFor="let v of info.installed"
+                class="version-option"
+                [class.version-option-active]="info.current?.version === v.version"
+              >
+                <span class="font-mono" style="font-weight: 600; min-width: 88px">v{{ v.version }}</span>
+                <span class="version-repo">{{ v.path }}</span>
+                <span *ngIf="info.current?.version === v.version" class="m3-badge primary">当前默认</span>
+                <span style="margin-left: auto; display: flex; gap: 6px">
+                  <button
+                    mat-stroked-button
+                    type="button"
+                    [disabled]="!!nodeBusy() || info.current?.version === v.version"
+                    (click)="switchNodeVersion(v.version)"
+                  >
+                    {{ nodeBusy() === 'switch:' + v.version ? '切换中...' : '设为默认' }}
+                  </button>
+                  <button
+                    mat-button
+                    color="warn"
+                    type="button"
+                    [disabled]="!!nodeBusy()"
+                    (click)="removeNodeVersion(v.version)"
+                  >
+                    删除
+                  </button>
+                </span>
+              </label>
+            </div>
+
+            <div>
+              <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px">
+                <h4 style="margin: 0">可安装版本</h4>
+                <button mat-button type="button" (click)="loadNodeVersions()" [disabled]="nm.loading">
+                  <mat-icon>refresh</mat-icon>
+                  <span>刷新</span>
+                </button>
+              </div>
+              <div *ngIf="info.available_error" class="m3-hint" style="color: var(--ag-warning)">
+                版本索引获取失败：{{ info.available_error }}（不影响已安装版本的切换）
+              </div>
+              <div class="node-version-grid" *ngIf="info.available.length">
+                <button
+                  type="button"
+                  class="node-version-chip"
+                  *ngFor="let a of info.available"
+                  [disabled]="!!nodeBusy() || isNodeInstalled(a.version)"
+                  (click)="installNodeVersion(a.version)"
+                  [matTooltip]="a.lts ? 'LTS ' + a.lts + ' · ' + a.date : a.date"
+                >
+                  <span class="font-mono">v{{ a.version }}</span>
+                  <span *ngIf="a.lts" class="m3-badge primary">LTS</span>
+                  <span *ngIf="isNodeInstalled(a.version)" class="m3-badge neutral">已装</span>
+                  <mat-icon *ngIf="nodeBusy() === 'install:' + a.version" class="node-spin">progress_activity</mat-icon>
+                </button>
+              </div>
+            </div>
+          </ng-container>
+        </div>
+
+        <div modal-footer style="display: flex; justify-content: flex-end">
+          <button mat-stroked-button (click)="closeNodeManager()">关闭</button>
+        </div>
+      </ag-modal>
+
       <ag-warp-plugin-dialog
         [open]="warpOpen()"
         (close)="warpOpen.set(false)"
@@ -403,6 +512,41 @@ import { appStoreApi, AppMarketItem, AppManagementData, InstallablePackage } fro
         color: var(--ag-on-surface-variant);
         word-break: break-all;
       }
+      .node-version-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+        gap: 8px;
+        max-height: 260px;
+        overflow-y: auto;
+        padding-right: 4px;
+      }
+      .node-version-chip {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 10px;
+        border-radius: 10px;
+        border: 1px solid var(--ag-outline-variant);
+        background: transparent;
+        cursor: pointer;
+        font-size: 0.8rem;
+        transition: border-color 0.15s ease, background 0.15s ease;
+      }
+      .node-version-chip:hover:not(:disabled) {
+        border-color: var(--ag-primary);
+        background: color-mix(in srgb, var(--ag-primary) 8%, transparent);
+      }
+      .node-version-chip:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+      }
+      .node-spin {
+        animation: node-spin 1s linear infinite;
+      }
+      @keyframes node-spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+      }
     `,
   ],
 })
@@ -436,8 +580,10 @@ export class AppstoreComponent implements OnInit, OnDestroy, HasUnsavedChanges {
   } | null>(null)
   readonly selectedVersionPkg = signal('')
   readonly versionInstalling = signal(false)
-  /** 正在卸载的应用 key，用于按钮忙碌态 */
-  readonly uninstallingKey = signal('')
+
+  // Node.js 版本管理器
+  readonly nodeMgr = signal<{ loading: boolean; error: string | null; info: NodeVersionInfo | null } | null>(null)
+  readonly nodeBusy = signal('')
 
   private unlistenTaskComplete: (() => void) | null = null
 
@@ -561,6 +707,85 @@ export class AppstoreComponent implements OnInit, OnDestroy, HasUnsavedChanges {
     }
   }
 
+  // ================= Node.js 版本管理器 =================
+  openNodeManager() {
+    this.nodeMgr.set({ loading: true, error: null, info: null })
+    this.loadNodeVersions()
+  }
+
+  async loadNodeVersions() {
+    const prev = this.nodeMgr()
+    this.nodeMgr.set({ loading: true, error: null, info: prev?.info ?? null })
+    try {
+      const res = await appStoreApi.getNodeVersions()
+      this.nodeMgr.set({ loading: false, error: null, info: res.data.data })
+    } catch (e: any) {
+      this.nodeMgr.set({ loading: false, error: e?.message || '读取版本信息失败', info: null })
+    }
+  }
+
+  closeNodeManager() {
+    this.nodeMgr.set(null)
+    this.nodeBusy.set('')
+  }
+
+  isNodeInstalled(version: string): boolean {
+    return (this.nodeMgr()?.info?.installed || []).some(v => v.version === version)
+  }
+
+  async installNodeVersion(version: string) {
+    this.nodeBusy.set('install:' + version)
+    try {
+      const res = await appStoreApi.installNodeVersion(version)
+      const taskId = res.data?.data?.task_id
+      if (taskId) {
+        this.taskCenter.trackAppInstall(taskId, 'nodejs', `Node.js v${version}`)
+      }
+      this.toast.info(`已开始安装 Node.js v${version}，可在右上角任务中心查看进度`)
+      // 下载解压需要一段时间，稍后自动刷新一次
+      setTimeout(() => this.loadNodeVersions(), 5000)
+    } catch (e: any) {
+      this.toast.error(e?.message || '安装失败')
+    } finally {
+      this.nodeBusy.set('')
+    }
+  }
+
+  async switchNodeVersion(version: string) {
+    this.nodeBusy.set('switch:' + version)
+    try {
+      const res = await appStoreApi.switchNodeVersion(version)
+      this.toast.success(res.data?.message || `已切换默认 Node.js 为 v${version}`)
+      await this.loadNodeVersions()
+    } catch (e: any) {
+      this.toast.error(e?.message || '切换失败')
+    } finally {
+      this.nodeBusy.set('')
+    }
+  }
+
+  async removeNodeVersion(version: string) {
+    const res = await this.confirmSvc.ask({
+      title: '删除 Node.js 版本',
+      resourceName: `v${version}`,
+      message: `将删除 ${version} 的整个安装目录，不可恢复。`,
+      impact: '如果这是当前默认版本，删除后 CLI 的 node 命令会回落到系统自带的 /usr/bin/node，需重新选择版本。',
+      confirmText: '确认删除',
+      tone: 'danger',
+    })
+    if (!res.confirmed) return
+    this.nodeBusy.set('remove:' + version)
+    try {
+      const r = await appStoreApi.removeNodeVersion(version)
+      this.toast.success(r.data?.message || `已删除 v${version}`)
+      await this.loadNodeVersions()
+    } catch (e: any) {
+      this.toast.error(e?.message || '删除失败')
+    } finally {
+      this.nodeBusy.set('')
+    }
+  }
+
   // ================= 安装版本选择 =================
   async openVersionPicker(app: AppMarketItem) {
     this.versionPicker.set({ app, loading: true, error: null, packages: [] })
@@ -624,22 +849,18 @@ export class AppstoreComponent implements OnInit, OnDestroy, HasUnsavedChanges {
     })
     if (!res.confirmed) return
 
-    this.uninstallingKey.set(app.key)
-    this.toast.info(`正在卸载 ${app.name}，请稍候...`)
     try {
+      // 卸载改为后台任务：立即返回 task_id，进度在右上角任务中心查看
       const r = await appStoreApi.uninstallApp(app.key)
-      const stillInstalled = r.data?.data?.still_installed
-      if (stillInstalled) {
-        this.toast.warning(r.data?.message || `${app.name} 仍检测到残留组件`)
-      } else {
-        this.toast.success(r.data?.message || `${app.name} 已成功卸载`)
+      const taskId = r.data?.data?.task_id
+      if (!taskId) {
+        this.toast.error('未获取到卸载任务 ID')
+        return
       }
-      // 必须强制刷新：服务端有 30s 的商店缓存，否则卡片状态不会变
-      await this.loadApps(true)
+      this.taskCenter.trackAppUninstall(taskId, app.key, app.name)
+      this.toast.info(`已在后台开始卸载 ${app.name}，可在右上角任务中心查看进度`)
     } catch (e: any) {
       this.toast.error(e.message || '卸载失败')
-    } finally {
-      this.uninstallingKey.set('')
     }
   }
 

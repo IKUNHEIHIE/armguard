@@ -930,3 +930,49 @@ test('AG-PKG-01: 安装版本查询与候选包/版本号白名单校验', async
   const other = await call('/api/v1/system/info', 'GET');
   assert.equal(other.handled, false);
 });
+
+test('AG-NODE-01: Node 版本管理校验与卸载任务化', async () => {
+  const { handleApps } = await import('../routes/apps.js');
+
+  const ctx = { parseBody: async () => ({}), currentUser: () => 'opsadmin', logOperation: () => {} };
+  async function call(route, method, body) {
+    let resp = null;
+    const u = new URL('http://127.0.0.1' + route);
+    const handled = await handleApps(
+      u.pathname,
+      { method, headers: {} },
+      { json: (data = null, message = 'ok', code = 0) => { resp = { code, message, data }; } },
+      u,
+      { ...ctx, parseBody: async () => body || {} }
+    );
+    return { handled, resp };
+  }
+
+  // 1. 版本号非法（防注入）必须 400
+  const badVer = await call('/api/v1/apps/nodejs/install-version', 'POST', { version: '20.11; rm -rf /' });
+  assert.equal(badVer.resp.code, 400);
+  assert.match(badVer.resp.message, /版本号格式非法/);
+
+  // 2. 未安装的版本不能切换
+  const badSwitch = await call('/api/v1/apps/nodejs/switch-version', 'POST', { version: '9.9.9' });
+  assert.equal(badSwitch.resp.code, 400);
+  assert.match(badSwitch.resp.message, /尚未安装/);
+
+  // 3. 删除不存在的版本 → 404
+  const del = await call('/api/v1/apps/nodejs/version/9.9.9', 'DELETE');
+  assert.equal(del.resp.code, 404);
+
+  // 4. 卸载改为后台任务：必须立即返回 task_id，而不是同步等待 apt
+  const un = await call('/api/v1/apps/htop/uninstall', 'POST', {});
+  assert.equal(un.resp.code, 0, un.resp.message);
+  assert.match(String(un.resp.data?.task_id || ''), /^task_un_/, '卸载应返回任务 ID 供任务中心跟踪');
+  assert.equal(un.resp.data?.app_key, 'htop');
+
+  // 5. 该任务应能在进度接口里查到（任务中心轮询用）
+  const prog = await call(
+    `/api/v1/apps/htop/install-progress?task_id=${un.resp.data.task_id}`,
+    'GET'
+  );
+  assert.equal(prog.resp.code, 0);
+  assert.equal(prog.resp.data.kind, 'uninstall');
+});

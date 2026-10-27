@@ -161,6 +161,25 @@ export class TaskCenterService {
     this.startAppTaskPolling(taskId, appKey, task.title)
   }
 
+  /** 卸载任务：与安装共用同一套轮询与任务中心展示 */
+  trackAppUninstall(taskId: string, appKey: string, appName: string) {
+    const task: AgTaskItem = {
+      id: taskId,
+      type: 'app_install',
+      title: `卸载 ${appName}`,
+      targetKey: appKey,
+      stage: 'installing',
+      progressPercent: 10,
+      logTail: `正在停止服务并卸载 ${appName}...`,
+      logs: [`[armguard-pkg] 已创建卸载任务 ${taskId} (${appKey})...`],
+      startedAt: Date.now(),
+      viewRoute: '/appstore',
+      viewLabel: '查看软件商店',
+    }
+    this.upsertTask(task)
+    this.startAppTaskPolling(taskId, appKey, task.title)
+  }
+
   private startAppTaskPolling(taskId: string, appKey: string, title: string) {
     this.stopTimer(taskId)
     const timer = setInterval(async () => {
