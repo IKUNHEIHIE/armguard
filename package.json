@@ -19,5 +19,5 @@
   },
   "keywords": ["arm", "arm64", "raspberry-pi", "linux", "server-panel", "ops"],
   "author": "ArmGuard Team",
-  "license": "MIT"
+  "license": "Apache-2.0"
 }

@@ -7,7 +7,7 @@
   <img src="https://img.shields.io/github/v/release/IKUNHEIHIE/armguard?style=for-the-badge&color=blue" alt="Release" />
   <img src="https://img.shields.io/badge/Backend-Node.js%20%2B%20Linux%20Native-00ADD8?style=for-the-badge&logo=nodedotjs" alt="Node.js" />
   <img src="https://img.shields.io/badge/Network-IPv4%20%2B%20IPv6%20Dual--Stack-6366F1?style=for-the-badge" alt="Dual Stack" />
-  <img src="https://img.shields.io/badge/License-MIT-blue?style=for-the-badge" alt="License" />
+  <img src="https://img.shields.io/badge/License-Apache_2.0-blue?style=for-the-badge" alt="License" />
 </p>
 
 ---
@@ -318,7 +318,7 @@ python backend/scripts/test_real_acme_ssl.py
 
 ## 📄 9. 开源协议
 
-本项目采用 [MIT License](LICENSE) 开源协议，欢迎自由使用、修改与分发。
+本项目采用 [Apache License 2.0](LICENSE) 开源协议，欢迎自由使用、修改与分发。
 ## 📝 10. 版本历史
 
 ### v0.2.1
